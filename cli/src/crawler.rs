@@ -1,9 +1,19 @@
-// Crawler - DuckDuckGo and Wikipedia search
+// Crawler - Wikipedia search and web content retrieval
+//
+// This module provides web search capabilities for learning.
+// Due to bot protection on many search engines, we primarily rely on
+// Wikipedia's API which is more automation-friendly.
 
 use serde::{Deserialize, Serialize};
 
+// =============================================================================
+// Data Structures
+// =============================================================================
+
 #[derive(Debug, Clone, Deserialize)]
 struct WikiResponse {
+    #[serde(rename = "type")]
+    page_type: Option<String>,
     #[serde(rename = "extract")]
     extract: Option<String>,
     title: Option<String>,
@@ -29,146 +39,215 @@ pub struct SearchResult {
     pub source: String,
 }
 
+// =============================================================================
+// Wikipedia Search
+// =============================================================================
+
 /// Search Wikipedia for a query
+///
+/// Tries English Wikipedia first, then Chinese Wikipedia.
+/// Handles disambiguation pages by returning them with minimal content.
 pub async fn search_wikipedia(query: &str) -> Vec<SearchResult> {
     let mut results = Vec::new();
 
     // Try English Wikipedia first
+    if let Some(result) = fetch_wikipedia_page(query, "en").await {
+        results.push(result);
+    }
+
+    // Try Chinese Wikipedia if no English results
+    if results.is_empty() {
+        if let Some(result) = fetch_wikipedia_page(query, "zh").await {
+            results.push(result);
+        }
+    }
+
+    results
+}
+
+/// Fetch a single Wikipedia page
+async fn fetch_wikipedia_page(query: &str, lang: &str) -> Option<SearchResult> {
     let url = format!(
-        "https://en.wikipedia.org/api/rest_v1/page/summary/{}",
+        "https://{}.wikipedia.org/api/rest_v1/page/summary/{}",
+        lang,
         urlencoding::encode(query)
     );
 
-    if let Ok(response) = reqwest::get(&url).await {
-        if let Ok(data) = response.json::<WikiResponse>().await {
-            if let Some(extract) = data.extract {
+    let client = reqwest::Client::builder()
+        .user_agent("SeedIntelligence/0.1.0 (https://github.com/seed-intelligence; educational purpose)")
+        .build()
+        .ok()?;
+
+    let response = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[Crawler] Wikipedia {} request failed: {}", lang, e);
+            return None;
+        }
+    };
+
+    if !response.status().is_success() {
+        eprintln!("[Crawler] Wikipedia {} returned status: {}", lang, response.status());
+        return None;
+    }
+
+    let data: WikiResponse = match response.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[Crawler] Failed to parse Wikipedia {} response: {}", lang, e);
+            return None;
+        }
+    };
+
+    // Check if we have an extract
+    let extract = data.extract?;
+
+    // Skip disambiguation pages with minimal content
+    if extract.len() < 20 && data.page_type.as_deref() == Some("disambiguation") {
+        eprintln!("[Crawler] Skipping disambiguation page for: {}", query);
+        return None;
+    }
+
+    let title = data.title.unwrap_or_else(|| query.to_string());
+    let wiki_url = data.content_urls
+        .and_then(|c| c.desktop)
+        .and_then(|d| d.page)
+        .unwrap_or_else(|| format!("https://{}.wikipedia.org/wiki/{}", lang, urlencoding::encode(query)));
+
+    Some(SearchResult {
+        title,
+        snippet: extract,
+        url: wiki_url,
+        source: "wikipedia".to_string(),
+    })
+}
+
+// =============================================================================
+// Alternative: DuckDuckGo Instant Answer API
+// =============================================================================
+
+/// Search using DuckDuckGo Instant Answer API
+///
+/// This uses the DuckDuckGo Instant Answer API which is more automation-friendly
+/// than the HTML search. It returns definitions and abstracts from Wikipedia and
+/// other sources.
+pub async fn search_duckduckgo(query: &str) -> Vec<SearchResult> {
+    let url = format!(
+        "https://api.duckduckgo.com/?q={}&format=json&no_html=1",
+        urlencoding::encode(query)
+    );
+
+    let client = match reqwest::Client::builder()
+        .user_agent("SeedIntelligence/0.1.0 (https://github.com/seed-intelligence; educational purpose)")
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[Crawler] Failed to create HTTP client: {}", e);
+            return vec![];
+        }
+    };
+
+    let response = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[Crawler] DuckDuckGo API request failed: {}", e);
+            return vec![];
+        }
+    };
+
+    let data: DDGResponse = match response.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[Crawler] Failed to parse DuckDuckGo response: {}", e);
+            return vec![];
+        }
+    };
+
+    let mut results = Vec::new();
+
+    // Add abstract if available
+    if let Some(abstract_text) = data.abstract_text {
+        if !abstract_text.is_empty() {
+            results.push(SearchResult {
+                title: data.heading.clone().unwrap_or_else(|| query.to_string()),
+                snippet: abstract_text,
+                url: data.abstract_url.clone().unwrap_or_default(),
+                source: "duckduckgo".to_string(),
+            });
+        }
+    }
+
+    // Add related topics
+    for topic in data.related_topics.iter().take(3) {
+        if let (Some(text), Some(url)) = (&topic.text, &topic.first_url) {
+            if !text.is_empty() {
+                let title = text.split(" - ").next().unwrap_or(query).to_string();
                 results.push(SearchResult {
-                    title: data.title.unwrap_or_else(|| query.to_string()),
-                    snippet: extract,
-                    url: data.content_urls
-                        .and_then(|c| c.desktop)
-                        .and_then(|d| d.page)
-                        .unwrap_or_else(|| format!("https://en.wikipedia.org/wiki/{}", urlencoding::encode(query))),
-                    source: "wikipedia".to_string(),
+                    title,
+                    snippet: text.clone(),
+                    url: url.clone(),
+                    source: "duckduckgo".to_string(),
                 });
             }
         }
     }
 
-    // Try Chinese Wikipedia if no results
-    if results.is_empty() {
-        let url = format!(
-            "https://zh.wikipedia.org/api/rest_v1/page/summary/{}",
-            urlencoding::encode(query)
-        );
-
-        if let Ok(response) = reqwest::get(&url).await {
-            if let Ok(data) = response.json::<WikiResponse>().await {
-                if let Some(extract) = data.extract {
-                    results.push(SearchResult {
-                        title: data.title.unwrap_or_else(|| query.to_string()),
-                        snippet: extract,
-                        url: data.content_urls
-                            .and_then(|c| c.desktop)
-                            .and_then(|d| d.page)
-                            .unwrap_or_else(|| format!("https://zh.wikipedia.org/wiki/{}", urlencoding::encode(query))),
-                        source: "wikipedia".to_string(),
-                    });
-                }
-            }
-        }
-    }
-
     results
 }
 
-/// Search using DuckDuckGo HTML
-pub async fn search_duckduckgo(query: &str) -> Vec<SearchResult> {
-    let client = reqwest::Client::new();
-
-    let response = match client
-        .get("https://html.duckduckgo.com/html/")
-        .query(&[("q", query)])
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(_) => return get_mock_results(query),
-    };
-
-    let text = match response.text().await {
-        Ok(t) => t,
-        Err(_) => return get_mock_results(query),
-    };
-
-    let mut results = Vec::new();
-
-    // Simple HTML parsing using regex
-    let re = regex::Regex::new(r#"<a class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>.*?<a class="result__snippet"[^>]*>([^<]*)</a>"#).unwrap();
-
-    for cap in re.captures_iter(&text) {
-        if results.len() >= 5 {
-            break;
-        }
-
-        let url = cap.get(1).map(|m| m.as_str()).unwrap_or("#");
-        let title = cap.get(2).map(|m| m.as_str()).unwrap_or(query);
-        let snippet = cap.get(3).map(|m| m.as_str()).unwrap_or("");
-
-        results.push(SearchResult {
-            title: title.to_string(),
-            snippet: snippet.trim().to_string(),
-            url: url.to_string(),
-            source: "duckduckgo".to_string(),
-        });
-    }
-
-    if results.is_empty() {
-        get_mock_results(query)
-    } else {
-        results
-    }
+#[derive(Debug, Clone, Deserialize)]
+struct DDGResponse {
+    #[serde(rename = "Abstract")]
+    abstract_text: Option<String>,
+    #[serde(rename = "AbstractURL")]
+    abstract_url: Option<String>,
+    #[serde(rename = "Heading")]
+    heading: Option<String>,
+    #[serde(rename = "RelatedTopics")]
+    related_topics: Vec<RelatedTopic>,
 }
 
-/// Combined search: Wikipedia first, then DuckDuckGo
+#[derive(Debug, Clone, Deserialize)]
+struct RelatedTopic {
+    #[serde(rename = "Text")]
+    text: Option<String>,
+    #[serde(rename = "FirstURL")]
+    first_url: Option<String>,
+}
+
+// =============================================================================
+// Combined Search
+// =============================================================================
+
+/// Combined search: tries multiple sources
 pub async fn search(query: &str) -> Vec<SearchResult> {
     println!("[Crawler] Searching for: {}", query);
 
-    // Try Wikipedia first
-    let results = search_wikipedia(query).await;
+    // Try Wikipedia first (most reliable)
+    let mut results = search_wikipedia(query).await;
     println!("[Crawler] Wikipedia results: {}", results.len());
 
-    // Fallback to DuckDuckGo if no results
+    // If Wikipedia had no results, try DuckDuckGo Instant Answer API
     if results.is_empty() {
         let ddg_results = search_duckduckgo(query).await;
         println!("[Crawler] DuckDuckGo results: {}", ddg_results.len());
-        ddg_results
-    } else {
-        results
+        results = ddg_results;
     }
-}
 
-/// Get mock results for fallback
-pub fn get_mock_results(query: &str) -> Vec<SearchResult> {
-    vec![SearchResult {
-        title: query.to_string(),
-        snippet: format!("{} 是一个概念。", query),
-        url: "#".to_string(),
-        source: "mock".to_string(),
-    }]
-}
+    // Log if we got no results at all
+    if results.is_empty() {
+        eprintln!("[Crawler] No results found for query: '{}'", query);
+        eprintln!("[Crawler] Try a more specific term like 'Python_(programming_language)' for Wikipedia");
+    }
 
-/// Extract text from search results
-pub fn extract_text(results: &[SearchResult]) -> String {
     results
-        .iter()
-        .map(|r| format!("{}: {}", r.title, r.snippet))
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
-// urlencoding crate re-export for convenience
+// =============================================================================
+// URL Encoding Helper
+// =============================================================================
+
 mod urlencoding {
     pub fn encode(s: &str) -> String {
         let mut encoded = String::new();

@@ -59,8 +59,8 @@ fn test_learner_cleanup_removes_noise() {
 
     // Cleanup should work
     let cleanup = learner.cleanup(true);
-    assert!(cleanup.pruned_relations >= 0);
-    assert!(cleanup.pruned_concepts >= 0);
+    // pruned_relations and pruned_concepts are u32, always >= 0
+    println!("Cleanup: {} relations, {} concepts", cleanup.pruned_relations, cleanup.pruned_concepts);
 }
 
 #[test]

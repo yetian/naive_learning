@@ -112,6 +112,7 @@ impl Brain {
     }
 
     /// Find a relation between two concepts
+    #[allow(dead_code)]
     pub fn get_relation(&self, source: &str, target: &str) -> Option<&Relation> {
         let key = make_relation_key(source, target);
         self.relations.values().find(|r| {
@@ -128,6 +129,7 @@ impl Brain {
     }
 
     /// Get all relations involving a concept
+    #[allow(dead_code)]
     pub fn get_relations_for_concept(&self, concept: &str) -> Vec<&Relation> {
         self.relations
             .values()
