@@ -24,6 +24,15 @@ naive_learning/
 └── public/                   # Web UI
 ```
 
+## Supported File Formats
+
+The CLI supports learning from multiple file formats:
+- `.txt` - Plain text files (read directly)
+- `.epub` - E-books (requires Calibre)
+- `.mobi` - Kindle format (requires Calibre)
+- `.azw3` - Kindle format (requires Calibre)
+- `.pdf` - PDF documents (requires poppler-utils, text-based only)
+
 ## Common Commands
 
 ### CLI (Recommended - High Performance)
@@ -93,6 +102,7 @@ node nano-lm.js
 | `./seed` | Start REPL interactive mode |
 | `./seed ask <question>` | Q&A |
 | `./seed learn-text <text>` | Learn from text |
+| `./seed learn-file <file>` | Learn from file (txt, epub, mobi, azw3, pdf) |
 | `./seed init <concept>` | Initialize and learn from web |
 | `./seed stats` | View statistics |
 | `./seed brain` | View knowledge graph |
@@ -100,6 +110,7 @@ node nano-lm.js
 | `./seed related <name>` | Related concepts |
 | `./seed clear` | Clear knowledge base |
 | `./seed train <text>` | Train local language model |
+| `./seed train-file <file>` | Train LM from file |
 | `./seed generate <prompt>` | Generate text with local LM |
 
 ### Data Structure (brain.json v2.0)

@@ -7,6 +7,7 @@ mod inference;
 mod learner;
 mod nlp;
 mod lm;
+mod file_reader;
 
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
@@ -79,6 +80,24 @@ enum Commands {
     /// Train local language model
     Train {
         text: String,
+        /// Number of epochs
+        #[arg(short, long, default_value = "3")]
+        epochs: u32,
+    },
+    /// Learn from file (txt, epub, mobi, azw3)
+    LearnFile {
+        /// File path (txt, epub, mobi, azw3)
+        file: PathBuf,
+        /// Focus concept (ontology anchoring)
+        focus: Option<String>,
+        /// Lines per second (rate control)
+        #[arg(short, long, default_value = "100")]
+        rate: u32,
+    },
+    /// Train local language model from file
+    TrainFile {
+        /// File path (txt, epub, mobi, azw3)
+        file: PathBuf,
         /// Number of epochs
         #[arg(short, long, default_value = "3")]
         epochs: u32,
@@ -320,6 +339,97 @@ fn run_train(learner: &learner::IncrementalLearner, text: &str, epochs: u32) {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
+fn run_learn_file(learner: &mut learner::IncrementalLearner, file_path: &PathBuf, focus: Option<&str>, rate: u32) {
+    println!("\n📚 Learning from file: {:?}", file_path);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+    let batch_size = 10;
+    let delay_ms = 1000 / rate.max(1);
+
+    let result = file_reader::stream_read_file(file_path, batch_size, |text| {
+        learner.learn_from_text(text, focus);
+
+        // Rate control
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms as u64));
+    });
+
+    match result {
+        Ok((lines, temp_file)) => {
+            // Cleanup
+            file_reader::cleanup_temp_file(temp_file.as_ref());
+
+            // Final cleanup and save
+            let cleanup = learner.cleanup(false);
+            if let Err(e) = learner.save() {
+                eprintln!("❌ Error saving brain: {}", e);
+            }
+
+            println!("\n✅ Learning complete!");
+            println!("   Lines processed: {}", lines);
+            println!("   Pruned: {} relations, {} concepts", cleanup.pruned_relations, cleanup.pruned_concepts);
+
+            let stats = learner.get_stats();
+            println!("   Total concepts: {}", stats.total_concepts);
+            println!("   Total relations: {}", stats.total_relations);
+        }
+        Err(e) => {
+            eprintln!("❌ Error reading file: {}", e);
+        }
+    }
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+}
+
+fn run_train_file(learner: &learner::IncrementalLearner, file_path: &PathBuf, epochs: u32) {
+    let model_path = learner.brain_path.parent()
+        .map(|p| p.join("lm_weights.json"))
+        .unwrap_or_else(|| std::path::PathBuf::from("lm_weights.json"));
+
+    println!("\n🧠 Training Language Model from file");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("File: {:?}", file_path);
+    println!("Epochs: {}", epochs);
+
+    // Read file content
+    let result = file_reader::read_file(file_path);
+
+    match result {
+        Ok((text, temp_file)) => {
+            // Cleanup temp file
+            file_reader::cleanup_temp_file(temp_file.as_ref());
+
+            println!("Text length: {} chars", text.len());
+
+            // Create model
+            let model = match lm::create_model() {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("❌ Failed to create language model: {}", e);
+                    return;
+                }
+            };
+
+            // Create trainer
+            let mut trainer = lm::Trainer::new(model, 0.01);
+
+            // Train
+            trainer.train_on_text(&text, epochs);
+
+            // Save weights
+            if let Err(e) = trainer.model.save_weights(model_path.to_str().unwrap()) {
+                eprintln!("❌ Failed to save model weights: {}", e);
+            } else {
+                println!("✅ Model weights saved to {:?}", model_path);
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Error reading file: {}", e);
+        }
+    }
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+}
+
 fn run_repl(learner: &mut learner::IncrementalLearner, brain_path: PathBuf) {
     println!("\n╔═══════════════════════════════════════════╗");
     println!("║     🌱 Seed-Intelligence REPL             ║");
@@ -523,6 +633,12 @@ async fn main() {
         }
         Some(Commands::Train { text, epochs }) => {
             run_train(&learner, &text, epochs);
+        }
+        Some(Commands::LearnFile { file, focus, rate }) => {
+            run_learn_file(&mut learner, &file, focus.as_deref(), rate);
+        }
+        Some(Commands::TrainFile { file, epochs }) => {
+            run_train_file(&learner, &file, epochs);
         }
         Some(Commands::Repl) => {
             run_repl(&mut learner, brain_path);
