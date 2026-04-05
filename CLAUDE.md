@@ -81,8 +81,8 @@ node nano-lm.js
 | Module | File | Purpose |
 |--------|------|---------|
 | **IncrementalLearner** | `incremental-learner.js` / `cli/src/learner.rs` | Hebbian learning engine with sliding window co-occurrence, energy-based concept solidification, decay/pruning |
-| **Inference Engine** | `inference.js` / `cli/src/inference.rs` | Graph-based Q&A using path aggregation |
-| **Crawler** | `crawler.js` / `cli/src/crawler.rs` | DuckDuckGo search + Wikipedia API + web scraping |
+| **Inference Engine** | `inference.js` / `cli/src/inference.rs` | Graph-based Q&A using path aggregation, multi-word phrase matching |
+| **Crawler** | `crawler.js` / `cli/src/crawler.rs` | Multi-language Wikipedia search (11 languages) + DuckDuckGo API |
 | **NLP** | `nlp.js` / `cli/src/nlp.rs` | Tokenization (Jieba for Chinese), word frequency, co-occurrence extraction |
 | **LM** | `nano-lm.js` / `cli/src/lm.rs` | Local language model (Candle transformer) for text generation |
 
@@ -113,18 +113,44 @@ node nano-lm.js
 | `./seed train-file <file>` | Train LM from file |
 | `./seed generate <prompt>` | Generate text with local LM |
 
-### Data Structure (brain.json v2.0)
+### Data Structure (brain.json v2.1)
 
 ```json
 {
   "concepts": {
-    "概念名": { "energy": 1.2, "count": 45, "firstSeen": "...", "lastSeen": "..." }
+    "概念名": {
+      "energy": 1.2,
+      "count": 45,
+      "firstSeen": "...",
+      "lastSeen": "...",
+      "description": "概念的定义说明（来自Wikipedia）"
+    }
   },
   "relations": {
     "rel_xxx": { "source": "A", "target": "B", "weight": 0.85, "count": 10 }
   }
 }
 ```
+
+### Multi-language Support
+
+The crawler automatically detects query language and searches the appropriate Wikipedia edition:
+
+| Language | Code | Example Query |
+|----------|------|---------------|
+| Chinese | zh | 人工智能 |
+| Japanese | ja | 人工知能 |
+| Korean | ko | 인공지능 |
+| Russian | ru | Искусственный интеллект |
+| Arabic | ar | الذكاء الاصطناعي |
+| Thai | th | ปัญญาประดิษฐ์ |
+| Vietnamese | vi | Trí tuệ nhân tạo |
+| German | de | Künstliche Intelligenz |
+| French | fr | Intelligence artificielle |
+| Spanish | es | Inteligencia artificial |
+| English | en | Artificial Intelligence |
+
+Language detection uses Unicode character ranges and language-specific characters.
 
 ### API Endpoints (Node.js only)
 
