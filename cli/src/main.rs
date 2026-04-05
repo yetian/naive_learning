@@ -6,6 +6,7 @@ mod crawler;
 mod inference;
 mod learner;
 mod nlp;
+mod lm;
 
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
@@ -247,6 +248,78 @@ fn run_related(learner: &learner::IncrementalLearner, name: &str, depth: usize) 
     }
 }
 
+fn run_generate(learner: &learner::IncrementalLearner, prompt: &str, max_tokens: usize) {
+    // Check if we have a trained model
+    let model_path = learner.brain_path.parent()
+        .map(|p| p.join("lm_weights.json"))
+        .unwrap_or_else(|| std::path::PathBuf::from("lm_weights.json"));
+
+    // Create model
+    let mut model = match lm::create_model() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("❌ Failed to create language model: {}", e);
+            return;
+        }
+    };
+
+    // Try to load existing weights
+    if model_path.exists() {
+        if let Err(e) = model.load_weights(model_path.to_str().unwrap()) {
+            println!("⚠️ Could not load model weights: {}", e);
+        }
+    }
+
+    // Build vocabulary from brain concepts
+    for concept_name in learner.brain.concepts.keys() {
+        model.add_vocab(concept_name);
+    }
+    model.add_vocab(prompt);
+
+    println!("\n🤖 Generating text...");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Prompt: {}", prompt);
+
+    let output = model.generate(prompt, max_tokens, 0.8);
+    println!("\nGenerated: {}", output);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+}
+
+fn run_train(learner: &learner::IncrementalLearner, text: &str, epochs: u32) {
+    let model_path = learner.brain_path.parent()
+        .map(|p| p.join("lm_weights.json"))
+        .unwrap_or_else(|| std::path::PathBuf::from("lm_weights.json"));
+
+    println!("\n🧠 Training Language Model");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Text length: {} chars", text.len());
+    println!("Epochs: {}", epochs);
+
+    // Create model
+    let model = match lm::create_model() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("❌ Failed to create language model: {}", e);
+            return;
+        }
+    };
+
+    // Create trainer
+    let mut trainer = lm::Trainer::new(model, 0.01);
+
+    // Train
+    trainer.train_on_text(text, epochs);
+
+    // Save weights
+    if let Err(e) = trainer.model.save_weights(model_path.to_str().unwrap()) {
+        eprintln!("❌ Failed to save model weights: {}", e);
+    } else {
+        println!("✅ Model weights saved to {:?}", model_path);
+    }
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+}
+
 fn run_repl(learner: &mut learner::IncrementalLearner, brain_path: PathBuf) {
     println!("\n╔═══════════════════════════════════════════╗");
     println!("║     🌱 Seed-Intelligence REPL             ║");
@@ -446,12 +519,10 @@ async fn main() {
             run_related(&learner, &name, depth);
         }
         Some(Commands::Generate { prompt, max_tokens }) => {
-            println!("⚠️ Text generation not yet implemented in CLI");
-            println!("   (Use /learn to add knowledge first)");
+            run_generate(&learner, &prompt, max_tokens);
         }
         Some(Commands::Train { text, epochs }) => {
-            println!("⚠️ Training not yet implemented in CLI");
-            println!("   (Use /learn to add knowledge first)");
+            run_train(&learner, &text, epochs);
         }
         Some(Commands::Repl) => {
             run_repl(&mut learner, brain_path);

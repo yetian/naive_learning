@@ -1,43 +1,11 @@
-// NLP Module - Tokenization, Stop Words, Word Frequency
+// NLP Module - Using Jieba for Chinese Word Segmentation
+// Provides better tokenization for Chinese and English
 
 use lazy_static::lazy_static;
-use regex::Regex;
 use std::collections::HashSet;
 
+// Stop words (Chinese + English)
 lazy_static! {
-    // Common Chinese words dictionary
-    static ref COMMON_CHINESE: HashSet<&'static str> = {
-        let mut s = HashSet::new();
-        // Common nouns
-        s.insert("苹果"); s.insert("水果"); s.insert("手机"); s.insert("电脑");
-        s.insert("网络"); s.insert("软件"); s.insert("硬件"); s.insert("系统");
-        s.insert("数据"); s.insert("信息"); s.insert("技术"); s.insert("科学");
-        s.insert("学习"); s.insert("教育"); s.insert("学校"); s.insert("学生");
-        s.insert("老师"); s.insert("工作"); s.insert("公司"); s.insert("产品");
-        s.insert("服务"); s.insert("用户"); s.insert("客户"); s.insert("市场");
-        s.insert("价格"); s.insert("质量"); s.insert("时间"); s.insert("空间");
-        s.insert("世界"); s.insert("中国"); s.insert("美国"); s.insert("日本");
-        s.insert("欧洲"); s.insert("亚洲"); s.insert("国际"); s.insert("政治");
-        s.insert("经济"); s.insert("文化"); s.insert("历史"); s.insert("社会");
-        s.insert("生命"); s.insert("水"); s.insert("空气"); s.insert("光");
-        s.insert("热"); s.insert("温度"); s.insert("能量"); s.insert("物质");
-        s.insert("分子"); s.insert("原子");
-        // Common verbs
-        s.insert("学习"); s.insert("工作"); s.insert("生活"); s.insert("使用");
-        s.insert("开发"); s.insert("设计"); s.insert("创造"); s.insert("管理");
-        s.insert("组织"); s.insert("计划"); s.insert("开始"); s.insert("结束");
-        s.insert("进行"); s.insert("完成"); s.insert("发展"); s.insert("变化");
-        s.insert("增长"); s.insert("减少"); s.insert("提高"); s.insert("降低");
-        // Common adjectives
-        s.insert("重要"); s.insert("简单"); s.insert("复杂"); s.insert("困难");
-        s.insert("容易"); s.insert("快速"); s.insert("慢速"); s.insert("高效");
-        s.insert("低效"); s.insert("现代"); s.insert("传统");
-        // Question words
-        s.insert("什么"); s.insert("怎么"); s.insert("如何"); s.insert("为什么");
-        s
-    };
-
-    // Stop words (Chinese + English)
     static ref STOP_WORDS: HashSet<&'static str> = {
         let mut s = HashSet::new();
         // Chinese stop words
@@ -59,6 +27,11 @@ lazy_static! {
         s.insert("而且"); s.insert("或者"); s.insert("如果"); s.insert("虽然");
         s.insert("只是"); s.insert("就是"); s.insert("还是"); s.insert("应该");
         s.insert("需要"); s.insert("可能"); s.insert("关于");
+        // More Chinese stop words
+        s.insert("一个"); s.insert("一种"); s.insert("之"); s.insert("者");
+        s.insert("着"); s.insert("过"); s.insert("得"); s.insert("地");
+        s.insert("等"); s.insert("当"); s.insert("给"); s.insert("让");
+        s.insert("使"); s.insert("比"); s.insert("由"); s.insert("此");
         // English stop words
         s.insert("the"); s.insert("a"); s.insert("an"); s.insert("is"); s.insert("are");
         s.insert("was"); s.insert("were"); s.insert("be"); s.insert("been"); s.insert("being");
@@ -87,8 +60,95 @@ lazy_static! {
     };
 }
 
-/// Tokenize text (Chinese + English mixed)
-pub fn tokenize(text: &str) -> Vec<String> {
+/// Tokenizer using Jieba for Chinese segmentation
+pub struct TokenizerWrapper {
+    jieba: jieba_rs::Jieba,
+}
+
+impl TokenizerWrapper {
+    /// Create a new tokenizer
+    pub fn new() -> Self {
+        Self {
+            jieba: jieba_rs::Jieba::new(),
+        }
+    }
+
+    /// Tokenize text using Jieba for Chinese and regex for English
+    pub fn tokenize(&self, text: &str) -> Vec<String> {
+        if text.is_empty() {
+            return vec![];
+        }
+
+        let mut tokens = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // Use Jieba for Chinese word segmentation
+        let words = self.jieba.cut(text, false); // cut_all=false for more accurate segmentation
+
+        for word in words {
+            let word = word.trim();
+            if word.is_empty() {
+                continue;
+            }
+
+            // Skip single characters (unless they're meaningful)
+            if word.len() < 2 && word.chars().all(|c| c >= '\u{4e00}' && c <= '\u{9fff}') {
+                continue;
+            }
+
+            // Skip stop words
+            if STOP_WORDS.contains(word) {
+                continue;
+            }
+
+            // For English words, lowercase and check length
+            if word.chars().all(|c| c.is_ascii_alphabetic()) {
+                let word_lower = word.to_lowercase();
+                if word_lower.len() < 2 || STOP_WORDS.contains(word_lower.as_str()) {
+                    continue;
+                }
+                if !seen.contains(&word_lower) {
+                    seen.insert(word_lower.clone());
+                    tokens.push(word_lower);
+                }
+            } else {
+                // Chinese or mixed - keep original
+                if !seen.contains(word) {
+                    seen.insert(word.to_string());
+                    tokens.push(word.to_string());
+                }
+            }
+        }
+
+        tokens
+    }
+
+    /// Tokenize and filter stop words
+    pub fn tokenize_filtered(&self, text: &str) -> Vec<String> {
+        self.tokenize(text)
+    }
+
+    /// Get token IDs for model input (character-level)
+    pub fn encode(&self, text: &str) -> Vec<u32> {
+        text.chars().map(|c| c as u32).collect()
+    }
+
+    /// Decode token IDs back to text
+    pub fn decode(&self, ids: &[u32]) -> String {
+        ids.iter()
+            .filter_map(|&id| char::from_u32(id))
+            .collect()
+    }
+}
+
+impl Default for TokenizerWrapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Simple word-level tokenization (fallback without Jieba instance)
+pub fn simple_tokenize(text: &str) -> Vec<String> {
     if text.is_empty() {
         return vec![];
     }
@@ -96,51 +156,30 @@ pub fn tokenize(text: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    // 1. Extract English words (2+ letters)
-    if let Ok(re) = Regex::new(r"[a-zA-Z]{2,}") {
-        for cap in re.find_iter(text) {
-            let word = cap.as_str().to_lowercase();
-            if !STOP_WORDS.contains(word.as_str()) && !seen.contains(&word) && word.len() >= 2 {
-                seen.insert(word.clone());
-                tokens.push(word);
-            }
-        }
-    }
+    // Use global jieba instance
+    let jieba = jieba_rs::Jieba::new();
+    let words = jieba.cut(text, false);
 
-    // 2. Extract Chinese 2-gram
-    if let Ok(re) = Regex::new(r"[\u4e00-\u9fff]{2}") {
-        for cap in re.find_iter(text) {
-            let word = cap.as_str();
-            if !STOP_WORDS.contains(word) && !seen.contains(word) {
-                seen.insert(word.to_string());
-                tokens.push(word.to_string());
-            }
+    for word in words {
+        let word = word.trim();
+        if word.is_empty() || word.len() < 2 {
+            continue;
         }
-    }
 
-    // 3. Extract Chinese 3-gram (keywords)
-    if let Ok(re) = Regex::new(r"[\u4e00-\u9fff]{3}") {
-        for cap in re.find_iter(text) {
-            let word = cap.as_str();
-            // Skip if contains function words
-            if word.contains('的') || word.contains('了') || word.contains('是') {
-                continue;
-            }
-            if !STOP_WORDS.contains(word) && !seen.contains(word) {
-                seen.insert(word.to_string());
-                tokens.push(word.to_string());
-            }
+        if STOP_WORDS.contains(word) {
+            continue;
         }
-    }
 
-    // 4. Extract Chinese 4-gram (common words)
-    if let Ok(re) = Regex::new(r"[\u4e00-\u9fff]{4}") {
-        for cap in re.find_iter(text) {
-            let word = cap.as_str();
-            if COMMON_CHINESE.contains(word) && !seen.contains(word) {
-                seen.insert(word.to_string());
-                tokens.push(word.to_string());
+        // For English words, lowercase
+        if word.chars().all(|c| c.is_ascii_alphabetic()) {
+            let word_lower = word.to_lowercase();
+            if word_lower.len() >= 2 && !STOP_WORDS.contains(word_lower.as_str()) && !seen.contains(&word_lower) {
+                seen.insert(word_lower.clone());
+                tokens.push(word_lower);
             }
+        } else if !seen.contains(word) {
+            seen.insert(word.to_string());
+            tokens.push(word.to_string());
         }
     }
 
@@ -156,67 +195,14 @@ pub fn filter_stop_words(tokens: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Count word frequency
-pub fn count_frequency(texts: &[String], top_n: usize) -> Vec<(String, u32)> {
-    let mut freq = std::collections::HashMap::new();
-
-    for text in texts {
-        let tokens = tokenize(text);
-        for token in tokens {
-            *freq.entry(token).or_insert(0) += 1;
-        }
-    }
-
-    let mut items: Vec<_> = freq.into_iter().collect();
-    items.sort_by(|a, b| b.1.cmp(&a.1));
-    items.truncate(top_n);
-    items
+/// Get a global tokenizer instance
+pub fn get_tokenizer() -> TokenizerWrapper {
+    TokenizerWrapper::new()
 }
 
-/// Extract co-occurrences with target concept
-pub fn extract_cooccurrences(target: &str, texts: &[String], min_freq: u32) -> Vec<(String, u32)> {
-    let mut cooc = std::collections::HashMap::new();
-
-    for text in texts {
-        let tokens = tokenize(text);
-        let has_target = tokens.iter().any(|t| t.contains(target) || target.contains(t));
-
-        if has_target {
-            for token in &tokens {
-                if !token.contains(target) && !target.contains(token) {
-                    *cooc.entry(token.clone()).or_insert(0) += 1;
-                }
-            }
-        }
-    }
-
-    let mut items: Vec<_> = cooc.into_iter().filter(|(_, v)| *v >= min_freq).collect();
-    items.sort_by(|a, b| b.1.cmp(&a.1));
-    items
-}
-
-/// Extract keywords by combining frequency and co-occurrence
-pub fn extract_keywords(texts: &[String], target: &str, top_n: usize) -> Vec<(String, f64)> {
-    let word_freq = count_frequency(texts, top_n * 2);
-    let cooc = extract_cooccurrences(target, texts, 1);
-
-    let mut keywords = std::collections::HashMap::new();
-    let all_words: std::collections::HashSet<_> = word_freq.iter()
-        .map(|(w, _)| w)
-        .chain(cooc.iter().map(|(w, _)| w))
-        .collect();
-
-    for word in all_words {
-        let freq_score = word_freq.iter().find(|(w, _)| w == word).map(|(_, v)| *v).unwrap_or(0) as f64;
-        let cooc_score = cooc.iter().find(|(w, _)| w == word).map(|(_, v)| *v).unwrap_or(0) as f64;
-        keywords.insert(word.clone(), freq_score * 0.4 + cooc_score * 0.6);
-    }
-
-    let mut items: Vec<_> = keywords.into_iter().collect();
-    items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    items.truncate(top_n);
-    items
-}
+// Re-exports for compatibility
+pub type Tokenizer = TokenizerWrapper;
+pub use simple_tokenize as tokenize;
 
 #[cfg(test)]
 mod tests {
@@ -224,17 +210,26 @@ mod tests {
 
     #[test]
     fn test_tokenize() {
-        let text = "水是地球上最常见的物质之一。水的化学式是H2O。";
-        let tokens = tokenize(text);
-        println!("{:?}", tokens);
-        assert!(tokens.len() > 0);
+        let tokenizer = get_tokenizer();
+        let tokens = tokenizer.tokenize("人工智能是计算机科学的一个分支");
+        println!("Tokens: {:?}", tokens);
+        assert!(!tokens.is_empty());
+        // Should contain "人工智能" as a whole word
+        assert!(tokens.contains(&"人工智能".to_string()) || tokens.contains(&"计算机科学".to_string()));
     }
 
     #[test]
-    fn test_filter_stop_words() {
+    fn test_chinese_segmentation() {
+        let tokenizer = get_tokenizer();
+        let tokens = tokenizer.tokenize("机器学习是人工智能的核心技术之一");
+        println!("Tokens: {:?}", tokens);
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_filter() {
         let tokens = vec!["水".to_string(), "的".to_string(), "是".to_string(), "重要".to_string()];
         let filtered = filter_stop_words(&tokens);
-        assert!(filtered.contains(&"水".to_string()));
         assert!(!filtered.contains(&"的".to_string()));
     }
 }

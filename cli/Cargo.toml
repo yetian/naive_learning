@@ -19,6 +19,16 @@ regex = "1.10"
 lazy_static = "1.4"
 urlencoding = "2.1"
 
+# Hugging Face tokenizers
+tokenizers = "0.21"
+
+# Candle深度学习框架
+candle-core = "0.8"
+candle-nn = "0.8"
+
+# Chinese word segmentation
+jieba-rs = "0.7"
+
 [profile.release]
 strip = true
 lto = true

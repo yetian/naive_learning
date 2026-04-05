@@ -7,9 +7,10 @@
 ## 核心特性
 
 - **增量学习**: 基于 Hebb 学习规则 ("一起激发的神经元连在一起")
-- **非神经网络**: 使用滑动窗口共现算法，不依赖预训练模型
-- **具身智能**: 剪贴板监听 + 电子书阅读 + 沙盒执行
+- **中文优化**: 使用 jieba 分词，准确识别中文词汇
+- **本地 LM**: 内置轻量级 Transformer 语言模型 (Candle)
 - **图谱推理**: 迪杰斯特拉路径查找回答用户问题
+- **具身智能**: 剪贴板监听 + 电子书阅读 + 沙盒执行
 
 ## 快速开始
 
@@ -52,7 +53,8 @@ naive_learning/
 │       ├── brain.rs          # 知识图谱数据结构
 │       ├── learner.rs        # Hebbian 学习引擎
 │       ├── inference.rs      # 问答推理引擎
-│       ├── nlp.rs            # 分词/停用词
+│       ├── nlp.rs            # 分词 (jieba-rs 中文分词)
+│       ├── lm.rs             # 本地语言模型 (Candle)
 │       └── crawler.rs        # Wikipedia/DuckDuckGo 搜索
 ├── server.js                 # Express 服务器 (Node.js)
 ├── incremental-learner.js    # 核心增量学习引擎
@@ -61,6 +63,7 @@ naive_learning/
 ├── clipboard-watcher.js      # 剪贴板监听器
 ├── ebook-digester.js         # 电子书流式消化器
 ├── sandbox-environment.js    # 具身控制安全沙盒
+├── nano-lm.js                # 本地语言模型 (Node.js)
 ├── public/                   # 前端界面 (D3.js 可视化)
 └── agent_sandbox/            # 沙盒物理宇宙
 ```
@@ -99,6 +102,12 @@ cp target/release/seed-intelligence ../seed
 # 查看相关概念
 ./seed related "智能"
 
+# 训练本地语言模型
+./seed train "人工智能改变世界..." -e 3
+
+# 使用本地 LM 生成文本
+./seed generate "人工智能" -m 50
+
 # 清空知识库
 ./seed clear
 ```
@@ -124,6 +133,8 @@ cp target/release/seed-intelligence ../seed
 
 数据保存在 `~/.local/share/seed-intelligence/brain.json`
 
+LM 权重保存在 `~/.local/share/seed-intelligence/lm_weights.json`
+
 ## 核心技术
 
 ### 增量学习 (IncrementalLearner)
@@ -133,6 +144,18 @@ cp target/release/seed-intelligence ../seed
 - 距离衰减 (窗口内越远权重越低)
 - 概念凝固 (energy 值)
 - 代谢遗忘 (0.95 衰减率)
+
+### NLP 分词
+
+- jieba-rs 中文分词
+- 中英文停用词过滤
+- 支持混合文本处理
+
+### 本地语言模型 (CausalLM)
+
+- 轻量级 Transformer 架构
+- Candle 深度学习框架
+- 支持训练和文本生成
 
 ### 表达引擎 (/ask)
 
@@ -156,9 +179,11 @@ cp target/release/seed-intelligence ../seed
 
 ### CLI 版本 (推荐)
 - Rust 2021
-- clap (CLI)
-- reqwest (HTTP)
-- tokio (异步)
+- clap (CLI 参数解析)
+- reqwest (HTTP 客户端)
+- tokio (异步运行时)
+- jieba-rs (中文分词)
+- candle-core / candle-nn (深度学习框架)
 
 ### Node.js 版本
 - Node.js + Express

@@ -74,7 +74,8 @@ node nano-lm.js
 | **IncrementalLearner** | `incremental-learner.js` / `cli/src/learner.rs` | Hebbian learning engine with sliding window co-occurrence, energy-based concept solidification, decay/pruning |
 | **Inference Engine** | `inference.js` / `cli/src/inference.rs` | Graph-based Q&A using path aggregation |
 | **Crawler** | `crawler.js` / `cli/src/crawler.rs` | DuckDuckGo search + Wikipedia API + web scraping |
-| **NLP** | `nlp.js` / `cli/src/nlp.rs` | Tokenization, word frequency, co-occurrence extraction |
+| **NLP** | `nlp.js` / `cli/src/nlp.rs` | Tokenization (Jieba for Chinese), word frequency, co-occurrence extraction |
+| **LM** | `nano-lm.js` / `cli/src/lm.rs` | Local language model (Candle transformer) for text generation |
 
 ### Sensory Modules (Embodied)
 
@@ -98,6 +99,8 @@ node nano-lm.js
 | `./seed concept <name>` | Concept details |
 | `./seed related <name>` | Related concepts |
 | `./seed clear` | Clear knowledge base |
+| `./seed train <text>` | Train local language model |
+| `./seed generate <prompt>` | Generate text with local LM |
 
 ### Data Structure (brain.json v2.0)
 
@@ -157,3 +160,5 @@ CLI data path: `~/.local/share/seed-intelligence/brain.json`
 - `reqwest` - HTTP client
 - `tokio` - Async runtime
 - `directories` - Platform-specific data directories
+- `jieba-rs` - Chinese word segmentation
+- `candle-core` / `candle-nn` - Deep learning framework for LM

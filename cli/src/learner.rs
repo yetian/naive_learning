@@ -2,7 +2,7 @@
 // Based on: "Neurons that fire together, wire together"
 
 use crate::brain::Brain;
-use crate::nlp::tokenize;
+use crate::nlp::Tokenizer;
 use std::time::Instant;
 
 const WINDOW_SIZE: usize = 6;
@@ -15,17 +15,20 @@ const MAX_TEXT_LENGTH: usize = 50000;
 
 pub struct IncrementalLearner {
     pub brain: Brain,
-    brain_path: std::path::PathBuf,
+    pub brain_path: std::path::PathBuf,
+    tokenizer: Tokenizer,
 }
 
 impl IncrementalLearner {
     pub fn new(brain_path: Option<std::path::PathBuf>) -> Self {
         let path = brain_path.unwrap_or_else(crate::brain::default_brain_path);
         let brain = Brain::load(&path);
+        let tokenizer = crate::nlp::get_tokenizer();
 
         Self {
             brain,
             brain_path: path,
+            tokenizer,
         }
     }
 
@@ -43,7 +46,7 @@ impl IncrementalLearner {
 
         // Preprocess text
         let text = preprocess_text(text);
-        let tokens = tokenize(&text);
+        let tokens = self.tokenizer.tokenize(&text);
 
         println!("[Learner] Processing {} tokens, focus: {:?}", tokens.len(), focus_concept);
 
