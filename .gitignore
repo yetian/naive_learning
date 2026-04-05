@@ -39,8 +39,14 @@ agent_sandbox/*
 # Brain data (personal knowledge graph)
 brain.json
 
+# ==================== Rust CLI ====================
+cli/target/
+# cli/Cargo.lock  # Uncomment if you want to commit lockfile
+
 # Package lock (use npm for reproducibility)
 # package-lock.json
 
 .marscode
 nano_weights.bin.json
+
+target/*
