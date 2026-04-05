@@ -43,3 +43,4 @@ brain.json
 # package-lock.json
 
 .marscode
+nano_weights.bin.json

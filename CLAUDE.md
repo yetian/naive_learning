@@ -21,6 +21,9 @@ node ebook-digester.js ./agent_sandbox/book.epub   # requires Calibre
 
 # Test sandbox environment
 node sandbox-environment.js
+
+# Test Nano-LM (local language model)
+node nano-lm.js
 ```
 
 ## Architecture
@@ -41,6 +44,7 @@ node sandbox-environment.js
 | **Clipboard Watcher** | `clipboard-watcher.js` | Passive learning from clipboard content |
 | **E-book Digester** | `ebook-digester.js` | Stream reading TXT/EPUB/MOBI/AZW3 with rate control |
 | **Sandbox Environment** | `sandbox-environment.js` | Safe file operations in `./agent_sandbox/` |
+| **Nano-Causal-LM** | `nano-lm.js` | Local language model for text generation |
 
 ### Data Structure (brain.json v2.0)
 
@@ -60,8 +64,13 @@ node sandbox-environment.js
 - `POST /api/init` - Inject initial concept, trigger learning
 - `POST /api/learn-text` - Learn from raw text (clipboard watcher)
 - `POST /api/query` - Q&A via graph pathfinding
+- `POST /api/ask` - Enhanced Q&A with Wikipedia integration
+- `POST /api/clear` - Clear knowledge base
 - `GET /api/brain` - Get knowledge graph
 - `GET /api/stats` - Get learning statistics
+- `POST /api/train-lm` - Train local language model
+- `POST /api/generate` - Generate text with local LM
+- `POST /api/generate-stream` - Stream generated text (SSE)
 
 ## Key Design Principles
 

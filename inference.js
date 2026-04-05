@@ -5,7 +5,41 @@
 
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 const { tokenize, filterStopWords } = require('./nlp');
+
+/**
+ * 获取 Wikipedia 摘要
+ */
+async function fetchWikipediaSummary(query) {
+  // 先尝试中文 Wikipedia
+  try {
+    const response = await axios.get(
+      `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`,
+      { timeout: 5000 }
+    );
+    if (response.data?.extract) {
+      return `[来源: 维基百科] ${response.data.extract}`;
+    }
+  } catch (e) {
+    // 忽略错误，继续尝试英文
+  }
+
+  // 再尝试英文 Wikipedia
+  try {
+    const response = await axios.get(
+      `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`,
+      { timeout: 5000 }
+    );
+    if (response.data?.extract) {
+      return `[Source: Wikipedia] ${response.data.extract}`;
+    }
+  } catch (e) {
+    // 忽略
+  }
+
+  return null;
+}
 
 // 加载知识图谱
 function loadBrain() {
@@ -368,7 +402,7 @@ function findBestPath(nodeA, nodeB, brain) {
 /**
  * 表达引擎 - /ask 接口
  */
-function ask(question) {
+async function ask(question) {
   const brain = loadBrain();
   const startTime = Date.now();
 
@@ -392,6 +426,20 @@ function ask(question) {
   if (uniqueEntities.length === 1) {
     const concept = uniqueEntities[0];
 
+    // 检查是否需要 Wikipedia 摘要
+    const isWhatQuestion = /是[什么怎].*|什么.*|怎么.*|如何.*/.test(question);
+    const needsWiki = isWhatQuestion && top5.length > 0;
+
+    // 获取 Wikipedia 摘要
+    let wikiInfo = null;
+    if (needsWiki) {
+      try {
+        wikiInfo = await fetchWikipediaSummary(concept);
+      } catch (e) {
+        console.log('[ask] Wikipedia fetch failed:', e.message);
+      }
+    }
+
     // 找权重最高的5个关联
     const connections = [];
     for (const [id, relation] of Object.entries(brain.relations || {})) {
@@ -405,10 +453,15 @@ function ask(question) {
     connections.sort((a, b) => b.weight - a.weight);
     const top5 = connections.slice(0, 5);
 
+    // 构建回答
+    if (wikiInfo) {
+      answer = `${wikiInfo}\n\n`;
+    }
+
     if (top5.length === 0) {
-      answer = `关于"${concept}"，我只知道这一个概念，还没有发现它与其他概念的关联。`;
+      answer += `关于"${concept}"，我只知道这一个概念，还没有发现它与其他概念的关联。`;
     } else {
-      answer = `关于"${concept}"，我联想到以下概念：\n`;
+      answer += `关于"${concept}"，我联想到以下概念：\n`;
       top5.forEach((conn, i) => {
         answer += `${i + 1}. ${conn.target} (关联度: ${Math.round(conn.weight * 100)}%)\n`;
       });
@@ -419,6 +472,7 @@ function ask(question) {
       confidence: top5.length > 0 ? Math.round(top5[0].weight * 100) : 0,
       foundEntities: uniqueEntities,
       associations: top5,
+      wikiSource: wikiInfo ? 'wikipedia' : null,
       elapsedMs: Date.now() - startTime
     };
   }

@@ -60,7 +60,7 @@ async function learn(concept, autoLearn = true) {
 
   try {
     // 1. 搜索获取相关网页
-    const searchResults = await crawler.searchDuckDuckGo(concept);
+    const searchResults = await crawler.search(concept);
     console.log(`[Learn] Got ${searchResults.length} search results`);
 
     // 2. 提取文本内容
@@ -178,6 +178,201 @@ app.post('/api/learn/:concept', async (req, res) => {
 app.get('/api/brain', (req, res) => {
   const brain = loadBrain();
   res.json(brain);
+});
+
+// 清空知识库
+app.post('/api/clear', (req, res) => {
+  try {
+    const emptyBrain = {
+      version: '2.0',
+      lastUpdate: null,
+      concepts: {},
+      relations: {},
+      meta: {
+        totalConcepts: 0,
+        totalRelations: 0,
+        totalLearnCount: 0
+      }
+    };
+    fs.writeFileSync(BRAIN_PATH, JSON.stringify(emptyBrain, null, 2), 'utf-8');
+
+    // 重新初始化 learner
+    learner.brain = emptyBrain;
+    learner.conceptMap.clear();
+    learner.relationMap.clear();
+
+    res.json({ success: true, message: '知识库已清空' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== Nano-LM 模块 ====================
+const { NanoLM, Trainer, Vocab, CONFIG } = require('./nano-lm');
+
+// 初始化语言模型
+let languageModel = null;
+let languageTrainer = null;
+
+function initLanguageModel() {
+  if (!languageModel) {
+    languageModel = new NanoLM();
+    languageTrainer = new Trainer(languageModel);
+    // 尝试加载已有权重
+    languageModel.loadWeights();
+  }
+  return { model: languageModel, trainer: languageTrainer };
+}
+
+// 训练接口
+app.post('/api/train-lm', async (req, res) => {
+  try {
+    const { text, epochs = 3, learningRate = 0.01 } = req.body;
+
+    if (!text || text.length < 10) {
+      return res.status(400).json({ error: '文本太短，至少需要 10 个字符' });
+    }
+
+    const { trainer } = initLanguageModel();
+
+    // 添加文本中的字符到词表
+    for (const char of text) {
+      trainer.model.vocab.addToken(char);
+    }
+
+    // 训练
+    await trainer.trainFromText(text, epochs, learningRate);
+
+    res.json({
+      success: true,
+      vocabSize: trainer.model.vocab.nextIdx,
+      message: '训练完成'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 生成接口
+app.post('/api/generate', (req, res) => {
+  try {
+    const { prompt, maxTokens = 50, temperature = 0.8 } = req.body;
+
+    if (!prompt) {
+      return res.status(400).json({ error: '请提供 prompt' });
+    }
+
+    const { model } = initLanguageModel();
+
+    // 编码 prompt
+    const promptIds = model.vocab.encode(prompt);
+
+    // 生成
+    const generatedIds = model.generate(promptIds, maxTokens, temperature);
+
+    // 解码
+    const output = model.vocab.decode(generatedIds);
+
+    res.json({
+      prompt,
+      output,
+      tokensGenerated: generatedIds.length - promptIds.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// SSE 流式生成
+app.post('/api/generate-stream', (req, res) => {
+  try {
+    const { prompt, maxTokens = 50, temperature = 0.8 } = req.body;
+
+    if (!prompt) {
+      return res.status(400).json({ error: '请提供 prompt' });
+    }
+
+    const { model } = initLanguageModel();
+
+    // 设置 SSE 头
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // 编码 prompt
+    const promptIds = model.vocab.encode(prompt);
+
+    // 逐步生成
+    let currentIds = [...promptIds];
+    let generated = 0;
+
+    const generateStep = () => {
+      if (generated >= maxTokens) {
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+
+      const input = currentIds.slice(-model.contextLen);
+      const logits = model.forward(input);
+
+      // 温度缩放
+      for (let i = 0; i < logits.length; i++) {
+        logits[i] /= temperature;
+      }
+
+      // Softmax
+      const vocabSize = logits.length;
+      let maxVal = -Infinity;
+      for (let i = 0; i < vocabSize; i++) {
+        if (logits[i] > maxVal) maxVal = logits[i];
+      }
+
+      let sum = 0;
+      for (let i = 0; i < vocabSize; i++) {
+        logits[i] = Math.exp(logits[i] - maxVal);
+        sum += logits[i];
+      }
+      for (let i = 0; i < vocabSize; i++) {
+        logits[i] /= sum;
+      }
+
+      // 采样
+      let nextToken = 0;
+      let maxProb = -1;
+      for (let i = 0; i < vocabSize; i++) {
+        if (logits[i] > maxProb) {
+          maxProb = logits[i];
+          nextToken = i;
+        }
+      }
+
+      // 检查 EOS
+      if (nextToken === model.vocab.word2idx['[EOS]']) {
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+
+      currentIds.push(nextToken);
+      generated++;
+
+      // 发送 token
+      const char = model.vocab.idx2word[nextToken] || '';
+      if (char !== '[PAD]' && char !== '[BOS]' && char !== '[EOS]') {
+        res.write(`data: ${JSON.stringify({ token: char })}\n\n`);
+      }
+
+      // 继续生成
+      setImmediate(generateStep);
+    };
+
+    generateStep();
+
+  } catch (error) {
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
 });
 
 // 获取学习状态
