@@ -32,6 +32,15 @@ jieba-rs = "0.7"
 # Stop words library
 stop-words = "0.10"
 
+# File system watching
+notify = "6.1"
+
+# Clipboard access
+arboard = "3.4"
+
+# Terminal interaction
+crossterm = "0.28"
+
 [profile.release]
 strip = true
 lto = true

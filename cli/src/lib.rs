@@ -9,6 +9,7 @@ pub mod nlp;
 pub mod lm;
 pub mod file_reader;
 pub mod response_generator;
+pub mod observer;
 
 // Re-export main types for convenience
 pub use brain::{Brain, Concept, Relation};

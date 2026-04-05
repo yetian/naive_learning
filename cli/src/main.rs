@@ -9,6 +9,7 @@ mod nlp;
 mod lm;
 mod file_reader;
 mod response_generator;
+mod observer;
 
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
@@ -105,6 +106,12 @@ enum Commands {
     },
     /// Interactive REPL mode
     Repl,
+    /// Observe and learn from environment (embodied intelligence mode)
+    Observe {
+        /// Sandbox directory to watch (default: ./agent_sandbox)
+        #[arg(short, long)]
+        sandbox: Option<PathBuf>,
+    },
 }
 
 fn get_brain_path(brain_arg: Option<PathBuf>) -> PathBuf {
@@ -440,6 +447,23 @@ fn run_train_file(learner: &learner::IncrementalLearner, file_path: &PathBuf, ep
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
+fn run_observe(learner: &mut learner::IncrementalLearner, sandbox: Option<PathBuf>) {
+    let sandbox_path = sandbox.unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|p| p.join("agent_sandbox"))
+            .unwrap_or_else(|_| PathBuf::from("./agent_sandbox"))
+    });
+
+    // Create sandbox directory if it doesn't exist
+    if !sandbox_path.exists() {
+        std::fs::create_dir_all(&sandbox_path).ok();
+    }
+
+    if let Err(e) = observer::run_observe_mode(learner, &sandbox_path) {
+        eprintln!("❌ Observation mode error: {}", e);
+    }
+}
+
 fn run_repl(learner: &mut learner::IncrementalLearner, brain_path: PathBuf) {
     println!("\n╔═══════════════════════════════════════════╗");
     println!("║     🌱 Seed-Intelligence REPL             ║");
@@ -657,6 +681,9 @@ async fn main() {
         }
         Some(Commands::Repl) => {
             run_repl(&mut learner, brain_path);
+        }
+        Some(Commands::Observe { sandbox }) => {
+            run_observe(&mut learner, sandbox);
         }
         None => {
             // No command - start REPL

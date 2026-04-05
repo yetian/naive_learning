@@ -74,6 +74,7 @@ The CLI supports learning from multiple file formats:
 | `./seed learn-text <text>` | Learn from text |
 | `./seed learn-file <file>` | Learn from file (txt, epub, mobi, azw3, pdf) |
 | `./seed init <concept>` | Initialize and learn from web |
+| `./seed observe` | Embodied intelligence mode (watch files, clipboard, commands) |
 | `./seed stats` | View statistics |
 | `./seed brain` | View knowledge graph |
 | `./seed concept <name>` | Concept details with description |
@@ -121,6 +122,33 @@ The crawler automatically detects query language and searches the appropriate Wi
 | English | en | Artificial Intelligence |
 
 Language detection uses Unicode character ranges and language-specific characters.
+
+### Observe Mode (Embodied Intelligence)
+
+The `observe` command enables embodied intelligence mode where Seed learns from its environment:
+
+```bash
+./seed observe
+./seed observe --sandbox ./my_sandbox
+```
+
+**Features:**
+- **File watching**: Monitors `agent_sandbox/` for new/modified files
+- **Clipboard monitoring**: Learns from clipboard content (polling-based)
+- **Command execution**: Run commands and learn from output
+- **Batch learning**: Accumulates observations and learns in batches
+
+**Interactive Commands in Observe Mode:**
+| Command | Description |
+|---------|-------------|
+| `<text>` | Add text to observation buffer |
+| `/run <cmd>` | Execute command and capture output |
+| `/file <path>` | Read file from sandbox |
+| `/history` | Show recent observations |
+| `/stats` | Show observation statistics |
+| `/learn` | Force immediate batch learning |
+| `/save` | Save knowledge base |
+| `/exit` | Exit observe mode |
 
 ## Key Design Principles
 
