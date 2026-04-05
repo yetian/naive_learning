@@ -113,12 +113,24 @@ pub fn generate_paragraph(relations: &[(String, String, f64)], main_concept: &st
 }
 
 /// Generate answer for single concept query
-pub fn generate_single_concept_answer(concept: &str, related: &[(String, f64)]) -> String {
+pub fn generate_single_concept_answer(concept: &str, related: &[(String, f64)], description: Option<&str>) -> String {
+    let mut response = String::new();
+
+    // Start with the description if available
+    if let Some(desc) = description {
+        if !desc.is_empty() {
+            response = format!("**{}**\n\n{}\n\n", concept, desc);
+        }
+    }
+
     if related.is_empty() {
-        return format!(
-            "关于\"{}\"，这是我刚刚学到的新概念。如果你能告诉我更多相关信息，我可以更好地理解它。",
-            concept
-        );
+        if response.is_empty() {
+            return format!(
+                "关于\"{}\"，这是我刚刚学到的新概念。如果你能告诉我更多相关信息，我可以更好地理解它。",
+                concept
+            );
+        }
+        return response;
     }
 
     // Filter out noise (short words, punctuation)
@@ -128,32 +140,32 @@ pub fn generate_single_concept_answer(concept: &str, related: &[(String, f64)]) 
         .collect();
 
     if filtered.is_empty() {
-        return format!(
-            "关于\"{}\"，我目前了解的信息还不够多。建议我通过 `./seed init \"{}\"` 来获取更多信息？",
-            concept, concept
-        );
+        if response.is_empty() {
+            return format!(
+                "关于\"{}\"，我目前了解的信息还不够多。建议我通过 `./seed init \"{}\"` 来获取更多信息？",
+                concept, concept
+            );
+        }
+        return response;
     }
 
-    let mut response = format!("关于\"{}\"，我了解到：\n\n", concept);
+    if response.is_empty() {
+        response = format!("关于\"{}\"：\n\n", concept);
+    }
 
     // Group related concepts by strength
     let strong: Vec<_> = filtered.iter().filter(|(_, w)| *w > 0.3).collect();
     let medium: Vec<_> = filtered.iter().filter(|(_, w)| *w > 0.1 && *w <= 0.3).collect();
-    let weak: Vec<_> = filtered.iter().filter(|(_, w)| *w <= 0.1).collect();
+    let _weak: Vec<_> = filtered.iter().filter(|(_, w)| *w <= 0.1).collect();
 
     if !strong.is_empty() {
         let concepts: Vec<_> = strong.iter().take(3).map(|(c, _)| c.as_str()).collect();
-        response += &format!("它与{}等概念有着密切的关联。\n", concepts.join("、"));
+        response += &format!("**相关概念**：{}\n", concepts.join("、"));
     }
 
     if !medium.is_empty() {
         let concepts: Vec<_> = medium.iter().take(3).map(|(c, _)| c.as_str()).collect();
-        response += &format!("此外，它还与{}等概念有所关联。\n", concepts.join("、"));
-    }
-
-    if !weak.is_empty() && weak.len() > 1 {
-        let concepts: Vec<_> = weak.iter().take(2).map(|(c, _)| c.as_str()).collect();
-        response += &format!("另外，{}也值得了解。\n", concepts.join("和"));
+        response += &format!("**扩展阅读**：{}\n", concepts.join("、"));
     }
 
     response
@@ -166,7 +178,7 @@ pub fn generate_multi_concept_answer(
     path_details: &[(String, String, f64)],
 ) -> String {
     if concepts.len() < 2 {
-        return generate_single_concept_answer(&concepts[0], &[]);
+        return generate_single_concept_answer(&concepts[0], &[], None);
     }
 
     let concept_a = &concepts[0];

@@ -24,6 +24,9 @@ pub struct Concept {
     pub first_seen: String,
     #[serde(rename = "lastSeen")]
     pub last_seen: String,
+    /// Short description/definition of the concept
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Knowledge graph relation edge
@@ -108,7 +111,22 @@ impl Brain {
             count: 1,
             first_seen: now.clone(),
             last_seen: now,
+            description: None,
         })
+    }
+
+    /// Set the description for a concept
+    pub fn set_concept_description(&mut self, name: &str, description: &str) {
+        if let Some(concept) = self.concepts.get_mut(name) {
+            // Only set if description is longer than existing one
+            let should_update = match &concept.description {
+                None => true,
+                Some(existing) => description.len() > existing.len(),
+            };
+            if should_update && !description.is_empty() {
+                concept.description = Some(description.to_string());
+            }
+        }
     }
 
     /// Find a relation between two concepts

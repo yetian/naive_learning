@@ -138,6 +138,11 @@ async fn run_init(learner: &mut learner::IncrementalLearner, concept: &str, auto
     let result = learner.learn_from_text(&full_text, Some(concept));
     println!("📚 Learning result: {:?}", result);
 
+    // Store description from first search result (after concept is created)
+    if let Some(first_result) = search_results.first() {
+        learner.set_concept_description(concept, &first_result.snippet);
+    }
+
     // Cleanup
     let cleanup = learner.cleanup(false);
     println!("🧹 Cleanup: {} relations, {} concepts pruned",
@@ -247,6 +252,10 @@ fn run_concept(learner: &learner::IncrementalLearner, name: &str) {
     if let Some(c) = learner.get_concept(name) {
         println!("\n📌 Concept: {}", name);
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        if let Some(ref desc) = c.description {
+            println!("📝 {}", desc);
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        }
         println!("能量: {:.4}", c.energy);
         println!("出现次数: {}", c.count);
         println!("首次出现: {}", c.first_seen);

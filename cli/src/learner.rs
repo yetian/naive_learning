@@ -53,6 +53,13 @@ impl IncrementalLearner {
         let mut added_relations = 0u32;
         let mut updated_concepts = 0u32;
 
+        // Ensure focus concept exists as a concept (for multi-word concepts)
+        if let Some(focus) = focus_concept {
+            let concept = self.brain.get_or_create_concept(focus);
+            concept.energy += ENERGY_PER_MENTION * 2.0; // Extra energy for being the focus
+            updated_concepts += 1;
+        }
+
         // Sliding window processing
         for i in 0..tokens.len().saturating_sub(1) {
             let window: Vec<_> = tokens[i..].iter().take(WINDOW_SIZE).collect();
@@ -261,6 +268,11 @@ impl IncrementalLearner {
     /// Clear knowledge base
     pub fn clear(&mut self) {
         self.brain.clear();
+    }
+
+    /// Set description for a concept (useful for storing Wikipedia summaries)
+    pub fn set_concept_description(&mut self, name: &str, description: &str) {
+        self.brain.set_concept_description(name, description);
     }
 }
 

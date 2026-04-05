@@ -25,8 +25,45 @@ pub fn parse_query(question: &str) -> Vec<String> {
 pub fn find_matching_concepts(query_words: &[String], brain: &Brain) -> Vec<Match> {
     let mut matches = Vec::new();
     let mut matched_names = HashSet::new();
+    let mut matched_word_indices = HashSet::new();
 
-    for word in query_words {
+    // Try multi-word phrases first, longest to shortest (e.g., "Machine Learning" before "machine")
+    for phrase_len in (2..=query_words.len().min(4)).rev() {
+        for i in 0..=(query_words.len().saturating_sub(phrase_len)) {
+            let j = i + phrase_len;
+            // Skip if any word in this range is already matched
+            if (i..j).any(|idx| matched_word_indices.contains(&idx)) {
+                continue;
+            }
+
+            let phrase = query_words[i..j].join(" ");
+            let phrase_lower = phrase.to_lowercase();
+
+            // Case-insensitive match
+            for (concept_name, concept) in &brain.concepts {
+                if concept_name.to_lowercase() == phrase_lower && !matched_names.contains(concept_name) {
+                    matches.push(Match {
+                        word: phrase.clone(),
+                        concept_name: concept_name.clone(),
+                        energy: concept.energy,
+                        exact: true,
+                    });
+                    matched_names.insert(concept_name.clone());
+                    // Mark word indices as matched
+                    for idx in i..j {
+                        matched_word_indices.insert(idx);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    for (idx, word) in query_words.iter().enumerate() {
+        if matched_word_indices.contains(&idx) {
+            continue;
+        }
+
         let lower_word = word.to_lowercase();
 
         // Exact match (priority)
@@ -39,11 +76,12 @@ pub fn find_matching_concepts(query_words: &[String], brain: &Brain) -> Vec<Matc
                     exact: true,
                 });
                 matched_names.insert(word.clone());
+                matched_word_indices.insert(idx);
             }
         }
 
         // Fuzzy match (only if no exact match)
-        if !matched_names.contains(word) {
+        if !matched_word_indices.contains(&idx) {
             for (concept_name, concept) in &brain.concepts {
                 if concept_name.to_lowercase().contains(&lower_word)
                     && !matched_names.contains(concept_name)
@@ -55,6 +93,8 @@ pub fn find_matching_concepts(query_words: &[String], brain: &Brain) -> Vec<Matc
                         exact: false,
                     });
                     matched_names.insert(concept_name.clone());
+                    matched_word_indices.insert(idx);
+                    break; // Only match one concept per word
                 }
             }
         }
@@ -271,8 +311,13 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, question: &str) ->
         })
         .collect();
 
+    // Get description for first concept
+    let description = main_concepts.first()
+        .and_then(|c| brain.concepts.get(*c))
+        .and_then(|c| c.description.as_deref());
+
     let answer = if main_concepts.len() == 1 {
-        response_generator::generate_single_concept_answer(main_concepts[0], &related)
+        response_generator::generate_single_concept_answer(main_concepts[0], &related, description)
     } else {
         response_generator::generate_paragraph(&all_relations, &main_concepts[0])
     };
@@ -378,6 +423,10 @@ pub fn ask(question: &str, brain: &Brain) -> Answer {
 
 /// Generate answer for a single concept
 fn answer_single_concept(concept: &str, brain: &Brain) -> Answer {
+    // Get the description for the concept
+    let description = brain.concepts.get(concept)
+        .and_then(|c| c.description.as_deref());
+
     let mut connections: Vec<_> = brain
         .relations
         .iter()
@@ -395,7 +444,7 @@ fn answer_single_concept(concept: &str, brain: &Brain) -> Answer {
     connections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let top5: Vec<_> = connections.iter().take(5).map(|(t, w)| (t.clone(), *w)).collect();
 
-    let answer = response_generator::generate_single_concept_answer(concept, &top5);
+    let answer = response_generator::generate_single_concept_answer(concept, &top5, description);
 
     Answer {
         answer,

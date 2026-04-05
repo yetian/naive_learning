@@ -57,7 +57,7 @@ fn test_relation_to_sentence_related_to() {
 
 #[test]
 fn test_generate_single_concept_answer_empty() {
-    let answer = generate_single_concept_answer("测试概念", &[]);
+    let answer = generate_single_concept_answer("测试概念", &[], None);
 
     assert!(answer.contains("测试概念"));
 }
@@ -70,9 +70,22 @@ fn test_generate_single_concept_answer_with_relations() {
         ("相关概念3".to_string(), 0.2),
     ];
 
-    let answer = generate_single_concept_answer("主概念", &related);
+    let answer = generate_single_concept_answer("主概念", &related, None);
 
     assert!(answer.contains("主概念"));
+}
+
+#[test]
+fn test_generate_single_concept_answer_with_description() {
+    let related = vec![
+        ("相关概念1".to_string(), 0.8),
+    ];
+    let description = "这是一个测试概念的定义说明。";
+
+    let answer = generate_single_concept_answer("测试概念", &related, Some(description));
+
+    assert!(answer.contains("测试概念"));
+    assert!(answer.contains("定义说明"));
 }
 
 #[test]

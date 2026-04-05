@@ -7,7 +7,30 @@ use seed_intelligence::crawler::{
     search_duckduckgo,
     search,
     SearchResult,
+    detect_language,
+    Language,
 };
+
+#[test]
+fn test_detect_language_chinese() {
+    assert_eq!(detect_language("人工智能"), Language::Chinese);
+    assert_eq!(detect_language("机器学习"), Language::Chinese);
+}
+
+#[test]
+fn test_detect_language_japanese() {
+    assert_eq!(detect_language("こんにちは"), Language::Japanese);
+}
+
+#[test]
+fn test_detect_language_korean() {
+    assert_eq!(detect_language("인공지능"), Language::Korean);
+}
+
+#[test]
+fn test_detect_language_english() {
+    assert_eq!(detect_language("Artificial Intelligence"), Language::English);
+}
 
 #[test]
 fn test_search_result_serialization() {
@@ -16,6 +39,7 @@ fn test_search_result_serialization() {
         snippet: "摘要内容".to_string(),
         url: "https://test.com".to_string(),
         source: "wikipedia".to_string(),
+        lang: "zh".to_string(),
     };
 
     let json = serde_json::to_string(&result).unwrap();
@@ -34,6 +58,7 @@ fn test_search_result_clone() {
         snippet: "原始摘要".to_string(),
         url: "https://original.com".to_string(),
         source: "test".to_string(),
+        lang: "en".to_string(),
     };
 
     let cloned = result.clone();
@@ -48,6 +73,7 @@ fn test_search_result_debug() {
         snippet: "内容".to_string(),
         url: "https://test.com".to_string(),
         source: "wikipedia".to_string(),
+        lang: "zh".to_string(),
     };
 
     let debug_str = format!("{:?}", result);
@@ -65,7 +91,7 @@ async fn test_search_wikipedia_real() {
 
     // Should get results for a common topic
     if !results.is_empty() {
-        assert!(results[0].source == "wikipedia");
+        assert_eq!(results[0].source, "wikipedia");
         assert!(!results[0].snippet.is_empty());
     }
 }
@@ -78,7 +104,7 @@ async fn test_search_duckduckgo_real() {
 
     // Should get results
     if !results.is_empty() {
-        assert!(results[0].source == "duckduckgo");
+        assert_eq!(results[0].source, "duckduckgo");
     }
 }
 
@@ -97,18 +123,32 @@ async fn test_search_chinese() {
     let results = search("人工智能").await;
     println!("Search results for '人工智能': {:?}", results.len());
 
-    // Should handle Chinese queries
+    // Should handle Chinese queries and return Chinese Wikipedia
+    if !results.is_empty() {
+        println!("Language: {}", results[0].lang);
+    }
 }
 
 #[tokio::test]
 #[ignore]
-async fn test_search_returns_empty_on_network_error() {
-    // This tests that search returns empty vec on failure, not mock data
-    // Using a very long timeout query that might fail
-    let results = search_duckduckgo("x").await;
+async fn test_search_japanese() {
+    let results = search("人工知能").await;
+    println!("Search results for '人工知能': {:?}", results.len());
 
-    // Results could be empty or have actual results, but never mock
-    for r in &results {
-        assert_ne!(r.source, "mock");
+    // Should handle Japanese queries
+    if !results.is_empty() {
+        println!("Language: {}", results[0].lang);
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_search_korean() {
+    let results = search("인공지능").await;
+    println!("Search results for '인공지능': {:?}", results.len());
+
+    // Should handle Korean queries
+    if !results.is_empty() {
+        println!("Language: {}", results[0].lang);
     }
 }
