@@ -68,9 +68,25 @@ pub struct TokenizerWrapper {
 impl TokenizerWrapper {
     /// Create a new tokenizer
     pub fn new() -> Self {
-        Self {
-            jieba: jieba_rs::Jieba::new(),
+        let mut jieba = jieba_rs::Jieba::new();
+
+        // Load custom dictionary from file if it exists
+        if let Some(proj_dirs) = directories::ProjectDirs::from("com", "seed-intelligence", "Seed-Intelligence") {
+            let dict_path = proj_dirs.data_dir().join("custom_dict.txt");
+            if dict_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&dict_path) {
+                    for line in content.lines() {
+                        let word = line.split_whitespace().next().unwrap_or("");
+                        if !word.is_empty() && !word.starts_with('#') {
+                            jieba.add_word(word, None, None);
+                        }
+                    }
+                    println!("[NLP] Loaded custom dictionary from {:?}", dict_path);
+                }
+            }
         }
+
+        Self { jieba }
     }
 
     /// Tokenize text using Jieba for Chinese and regex for English

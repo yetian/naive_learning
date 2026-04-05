@@ -281,9 +281,25 @@ fn is_valid_token(token: &str) -> bool {
         return false;
     }
 
+    // Filter punctuation using Unicode categories
+    for c in token.chars() {
+        // Skip common punctuation
+        if c.is_whitespace() {
+            continue;
+        }
+        // Check if it's a CJK punctuation
+        let cp = c as u32;
+        if (0x3000..=0x303F).contains(&cp) || // CJK Symbols and Punctuation
+           (0xFF00..=0xFFEF).contains(&cp) || // Halfwidth and Fullwidth Forms
+           c.is_ascii_punctuation() {
+            return false;
+        }
+    }
+
     // Filter stop words
     let stop_words = ["的", "是", "在", "了", "和", "与", "或", "有", "这", "那",
-        "the", "is", "are", "was", "been", "being", "have", "has", "and", "but"];
+        "the", "is", "are", "was", "been", "being", "have", "has", "and", "but",
+        "它", "其", "此", "彼", "各", "每", "某"];
 
     !stop_words.contains(&token.to_lowercase().as_str())
 }

@@ -8,6 +8,7 @@ mod learner;
 mod nlp;
 mod lm;
 mod file_reader;
+mod response_generator;
 
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};

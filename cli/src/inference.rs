@@ -2,6 +2,7 @@
 
 use crate::brain::Brain;
 use crate::nlp::{filter_stop_words, tokenize};
+use crate::response_generator;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Parse user question into keywords
@@ -197,10 +198,13 @@ pub fn find_best_path(node_a: &str, node_b: &str, brain: &Brain) -> Option<PathR
 }
 
 /// Aggregate paths into answer
-pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, _question: &str) -> Answer {
+pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, question: &str) -> Answer {
     if paths.is_empty() {
         return Answer {
-            answer: "我的知识库中还没有关于这个概念的信息。".to_string(),
+            answer: format!(
+                "我暂时没有找到与\"{}\"相关的信息。\n\n你可以使用 `./seed init \"概念名\"` 来帮助我学习新知识。",
+                question
+            ),
             confidence: 0,
             paths: vec![],
             concepts: vec![],
@@ -211,7 +215,7 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, _question: &str) -
 
     // Collect all concepts from paths
     let mut all_concepts = HashSet::new();
-    let mut all_relations = Vec::new();
+    let mut all_relations: Vec<(String, String, f64)> = Vec::new();
 
     for path in paths {
         for i in 0..path.len() - 1 {
@@ -223,7 +227,7 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, _question: &str) -
                 if (rel.source.as_str() == path[i].as_str() && rel.target.as_str() == path[i + 1].as_str())
                     || (rel.source.as_str() == path[i + 1].as_str() && rel.target.as_str() == path[i].as_str())
                 {
-                    all_relations.push(rel);
+                    all_relations.push((rel.source.clone(), rel.target.clone(), rel.weight));
                     break;
                 }
             }
@@ -232,45 +236,32 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, _question: &str) -
 
     let main_concepts: Vec<_> = all_concepts.iter().take(5).cloned().collect();
 
-    let answer = if main_concepts.len() == 1 {
-        let concept = brain.concepts.get(*main_concepts.first().unwrap());
-        if let Some(c) = concept {
-            format!(
-                "关于\"{}\"，据我所知：\n这是一个重要概念，能量值为 {:.2}，出现在 {} 个上下文中。",
-                main_concepts.first().unwrap(),
-                c.energy,
-                c.count
-            )
-        } else {
-            format!("关于\"{}\"，这是一个重要的概念。", main_concepts.first().unwrap())
-        }
-    } else {
-        let concepts_str = main_concepts.iter().take(3).map(|s| s.to_string()).collect::<Vec<_>>().join("、");
-        let mut ans = format!("根据我的知识图谱，{} 等概念相互关联。\n\n", concepts_str);
-
-        if !all_relations.is_empty() {
-            let mut sorted_rels: Vec<_> = all_relations.iter().collect();
-            sorted_rels.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap_or(std::cmp::Ordering::Equal));
-
-            ans += "它们的关系：\n";
-            for r in sorted_rels.iter().take(3) {
-                ans += &format!(
-                    "• {} ↔ {} (关联度: {:.0}%)\n",
-                    r.source,
-                    r.target,
-                    r.weight * 100.0
-                );
+    // Use response generator for human-readable answer
+    let main_concepts_set: HashSet<_> = main_concepts.iter().cloned().collect();
+    let related: Vec<(String, f64)> = all_relations.iter()
+        .filter(|(s, t, _)| {
+            main_concepts_set.contains(s) || main_concepts_set.contains(t)
+        })
+        .map(|(s, t, w)| {
+            if main_concepts_set.contains(s) {
+                (t.clone(), *w)
+            } else {
+                (s.clone(), *w)
             }
-        }
+        })
+        .collect();
 
-        ans
+    let answer = if main_concepts.len() == 1 {
+        response_generator::generate_single_concept_answer(main_concepts[0], &related)
+    } else {
+        response_generator::generate_paragraph(&all_relations, &main_concepts[0])
     };
 
     // Calculate confidence
     let avg_weight = if all_relations.is_empty() {
         0.5
     } else {
-        all_relations.iter().map(|r| r.weight).sum::<f64>() / all_relations.len() as f64
+        all_relations.iter().map(|(_, _, w)| w).sum::<f64>() / all_relations.len() as f64
     };
 
     Answer {
@@ -339,7 +330,10 @@ pub fn ask(question: &str, brain: &Brain) -> Answer {
 
     if matches.is_empty() {
         return Answer {
-            answer: format!("我的知识库中还没有关于\"{}\"的信息。要我学习一下吗？", question),
+            answer: format!(
+                "我暂时不太理解\"{}\"的含义。\n\n你可以试着问我一些其他问题，或者使用以下命令帮助我学习：\n• ./seed init \"概念名\" - 从网络学习\n• ./seed learn-file <文件> - 从文件学习",
+                question
+            ),
             confidence: 0,
             paths: vec![],
             concepts: vec![],
@@ -366,23 +360,16 @@ pub fn ask(question: &str, brain: &Brain) -> Answer {
             .collect();
 
         connections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let top5: Vec<_> = connections.iter().take(5).collect();
+        let top5: Vec<_> = connections.iter().take(5).map(|(t, w)| (t.clone(), *w)).collect();
 
-        let answer = if top5.is_empty() {
-            format!("关于\"{}\"，我只知道这一个概念，还没有发现它与其他概念的关联。", concept)
-        } else {
-            let mut ans = format!("关于\"{}\"，我联想到以下概念：\n", concept);
-            for (i, (target, weight)) in top5.iter().enumerate() {
-                ans += &format!("{}. {} (关联度: {:.0}%)\n", i + 1, target, weight * 100.0);
-            }
-            ans
-        };
+        // Use response generator
+        let answer = response_generator::generate_single_concept_answer(concept, &top5);
 
         return Answer {
             answer,
             confidence: if !top5.is_empty() { (top5[0].1 * 100.0) as u32 } else { 0 },
             associations: Some(top5.iter().map(|(t, w)| Association {
-                concept: (*t).clone(),
+                concept: t.clone(),
                 weight: *w,
             }).collect()),
             concepts: vec![concept.clone()],
@@ -393,6 +380,7 @@ pub fn ask(question: &str, brain: &Brain) -> Answer {
 
     // Multiple concepts: path finding
     let mut all_paths = Vec::new();
+    let mut all_path_details: Vec<(String, String, f64)> = Vec::new();
 
     for i in 0..unique_entities.len() {
         for j in (i + 1)..unique_entities.len() {
@@ -400,6 +388,9 @@ pub fn ask(question: &str, brain: &Brain) -> Answer {
             let node_b = &unique_entities[j];
 
             if let Some(path_result) = find_best_path(node_a, node_b, brain) {
+                for edge in &path_result.path_details {
+                    all_path_details.push((edge.from.clone(), edge.to.clone(), edge.weight));
+                }
                 all_paths.push(PathResult {
                     path: path_result.path,
                     path_details: path_result.path_details,
@@ -409,29 +400,23 @@ pub fn ask(question: &str, brain: &Brain) -> Answer {
         }
     }
 
+    // Use response generator for multi-concept answer
     let answer = if all_paths.is_empty() {
-        format!("我找到了概念: {}，但它们之间还没有建立关联路径。",
-            unique_entities.join("、"))
+        format!(
+            "\"{}\"和\"{}\"是两个不同的概念。目前我还没有发现它们之间的直接关联。\n\n如果你能告诉我更多关于它们的关系，我可以更好地理解。",
+            unique_entities[0],
+            unique_entities.get(1).map(|s| s.as_str()).unwrap_or("其他概念")
+        )
     } else {
         // Sort by total weight
         all_paths.sort_by(|a, b| b.total_weight.partial_cmp(&a.total_weight).unwrap_or(std::cmp::Ordering::Equal));
         let best = &all_paths[0];
 
-        let mut ans = "我找到了逻辑链：\n".to_string();
-        let mut current_node = &best.path[0];
-
-        for edge in &best.path_details {
-            ans += &format!(
-                "• {} (权重 {:.0}%) -> {}\n",
-                current_node,
-                edge.weight * 100.0,
-                edge.to
-            );
-            current_node = &edge.to;
-        }
-
-        ans += &format!("\n总关联度: {:.0}%", best.total_weight * 100.0);
-        ans
+        response_generator::generate_multi_concept_answer(
+            &unique_entities,
+            &best.path,
+            &best.path_details.iter().map(|e| (e.from.clone(), e.to.clone(), e.weight)).collect::<Vec<_>>(),
+        )
     };
 
     let confidence = if !all_paths.is_empty() && !all_paths[0].path.is_empty() {
