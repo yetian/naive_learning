@@ -10,18 +10,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 naive_learning/
-├── seed                      # Rust CLI executable (recommended)
-├── cli/                      # Rust CLI source code
-├── server.js                 # Express server (Node.js)
-├── incremental-learner.js    # Core learning engine
-├── inference.js              # Q&A engine
-├── crawler.js                # Web search
-├── clipboard-watcher.js      # Passive learning
-├── ebook-digester.js         # E-book reader
-├── sandbox-environment.js    # Safe file operations
-├── nano-lm.js                # Local language model
-├── brain.json                # Knowledge graph data
-└── public/                   # Web UI
+├── seed              # Rust CLI executable
+├── cli/              # Rust CLI source code
+│   └── src/
+│       ├── main.rs           # CLI entry point + REPL
+│       ├── brain.rs          # Knowledge graph data structure
+│       ├── learner.rs        # Hebbian learning engine
+│       ├── inference.rs      # Q&A inference engine
+│       ├── nlp.rs            # Tokenization (jieba-rs)
+│       ├── lm.rs             # Local language model (Candle)
+│       ├── file_reader.rs    # Multi-format file reader
+│       └── crawler.rs        # Multi-language Wikipedia search
+└── agent_sandbox/    # Safe file operations directory
 ```
 
 ## Supported File Formats
@@ -34,8 +34,6 @@ The CLI supports learning from multiple file formats:
 - `.pdf` - PDF documents (requires poppler-utils, text-based only)
 
 ## Common Commands
-
-### CLI (Recommended - High Performance)
 
 ```bash
 # Run REPL interactive mode
@@ -54,59 +52,31 @@ The CLI supports learning from multiple file formats:
 ./seed stats
 ```
 
-### Node.js (Web Server)
-
-```bash
-# Start the main server
-node server.js
-
-# Start clipboard watcher (passive learning)
-node clipboard-watcher.js
-
-# Read an ebook (active learning)
-node ebook-digester.js ./agent_sandbox/book.txt
-node ebook-digester.js ./agent_sandbox/book.epub   # requires Calibre
-
-# Test sandbox environment
-node sandbox-environment.js
-
-# Test Nano-LM (local language model)
-node nano-lm.js
-```
-
 ## Architecture
 
 ### Core Modules
 
 | Module | File | Purpose |
 |--------|------|---------|
-| **IncrementalLearner** | `incremental-learner.js` / `cli/src/learner.rs` | Hebbian learning engine with sliding window co-occurrence, energy-based concept solidification, decay/pruning |
-| **Inference Engine** | `inference.js` / `cli/src/inference.rs` | Graph-based Q&A using path aggregation, multi-word phrase matching |
-| **Crawler** | `crawler.js` / `cli/src/crawler.rs` | Multi-language Wikipedia search (11 languages) + DuckDuckGo API |
-| **NLP** | `nlp.js` / `cli/src/nlp.rs` | Tokenization (Jieba for Chinese), word frequency, co-occurrence extraction |
-| **LM** | `nano-lm.js` / `cli/src/lm.rs` | Local language model (Candle transformer) for text generation |
-
-### Sensory Modules (Embodied)
-
-| Module | File | Purpose |
-|--------|------|---------|
-| **Clipboard Watcher** | `clipboard-watcher.js` | Passive learning from clipboard content |
-| **E-book Digester** | `ebook-digester.js` | Stream reading TXT/EPUB/MOBI/AZW3 with rate control |
-| **Sandbox Environment** | `sandbox-environment.js` | Safe file operations in `./agent_sandbox/` |
-| **Nano-Causal-LM** | `nano-lm.js` | Local language model for text generation |
+| **IncrementalLearner** | `cli/src/learner.rs` | Hebbian learning engine with sliding window co-occurrence, energy-based concept solidification, decay/pruning |
+| **Inference Engine** | `cli/src/inference.rs` | Graph-based Q&A using path aggregation, multi-word phrase matching |
+| **Crawler** | `cli/src/crawler.rs` | Multi-language Wikipedia search (11 languages) + DuckDuckGo API |
+| **NLP** | `cli/src/nlp.rs` | Tokenization (Jieba for Chinese), word frequency, co-occurrence extraction |
+| **LM** | `cli/src/lm.rs` | Local language model (Candle transformer) for text generation |
+| **FileReader** | `cli/src/file_reader.rs` | Multi-format file reading with streaming support |
 
 ### CLI Commands
 
 | Command | Usage |
 |---------|-------|
 | `./seed` | Start REPL interactive mode |
-| `./seed ask <question>` | Q&A |
+| `./seed ask <question>` | Q&A with concept descriptions |
 | `./seed learn-text <text>` | Learn from text |
 | `./seed learn-file <file>` | Learn from file (txt, epub, mobi, azw3, pdf) |
 | `./seed init <concept>` | Initialize and learn from web |
 | `./seed stats` | View statistics |
 | `./seed brain` | View knowledge graph |
-| `./seed concept <name>` | Concept details |
+| `./seed concept <name>` | Concept details with description |
 | `./seed related <name>` | Related concepts |
 | `./seed clear` | Clear knowledge base |
 | `./seed train <text>` | Train local language model |
@@ -152,24 +122,11 @@ The crawler automatically detects query language and searches the appropriate Wi
 
 Language detection uses Unicode character ranges and language-specific characters.
 
-### API Endpoints (Node.js only)
-
-- `POST /api/init` - Inject initial concept, trigger learning
-- `POST /api/learn-text` - Learn from raw text (clipboard watcher)
-- `POST /api/query` - Q&A via graph pathfinding
-- `POST /api/ask` - Enhanced Q&A with Wikipedia integration
-- `POST /api/clear` - Clear knowledge base
-- `GET /api/brain` - Get knowledge graph
-- `GET /api/stats` - Get learning statistics
-- `POST /api/train-lm` - Train local language model
-- `POST /api/generate` - Generate text with local LM
-- `POST /api/generate-stream` - Stream generated text (SSE)
-
 ## Key Design Principles
 
-1. **Memory < 20MB**: All stream processing uses `fs.createReadStream`, never loads full file into memory
-2. **CPU Friendly**: Polling-based clipboard watcher (1.5s interval), e-book rate control (8 lines/sec)
-3. **No LLM**: Q&A uses graph traversal (Dijkstra/BFS), not generative AI
+1. **Memory Efficient**: Stream processing for large files, never loads full file into memory
+2. **CPU Friendly**: Rate-controlled file reading, no heavy computation
+3. **No LLM for Q&A**: Q&A uses graph traversal (Dijkstra/BFS), not generative AI
 4. **Security**: Sandbox environment blocks `../` path traversal attempts
 
 ## Building CLI
@@ -184,15 +141,7 @@ CLI data path: `~/.local/share/seed-intelligence/brain.json`
 
 ## Dependencies
 
-### Node.js
-- `express` - Web server
-- `cors` - CORS middleware
-- `axios` - HTTP client for crawler
-- `cheerio` - HTML parsing
-- `clipboardy` - Clipboard access
-- Calibre (external) - For EPUB/MOBI/AZW3 conversion (`sudo apt install calibre`)
-
-### Rust CLI
+### Rust
 - `clap` - CLI argument parsing
 - `reqwest` - HTTP client
 - `tokio` - Async runtime
@@ -200,3 +149,7 @@ CLI data path: `~/.local/share/seed-intelligence/brain.json`
 - `jieba-rs` - Chinese word segmentation
 - `stop-words` - Stop words for multiple languages (Chinese, English, etc.)
 - `candle-core` / `candle-nn` - Deep learning framework for LM
+
+### External Tools (optional)
+- Calibre - For EPUB/MOBI/AZW3 conversion (`sudo apt install calibre`)
+- poppler-utils - For PDF processing (`sudo apt install poppler-utils`)

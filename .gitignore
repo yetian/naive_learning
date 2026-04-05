@@ -1,11 +1,3 @@
-# Dependencies
-node_modules/
-
-# Environment
-.env
-.env.local
-.env.*.local
-
 # IDE
 .idea/
 .vscode/
@@ -19,9 +11,6 @@ Thumbs.db
 
 # Logs
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
 # Build outputs
 dist/
@@ -36,17 +25,6 @@ tmp/
 agent_sandbox/*
 !agent_sandbox/.gitkeep
 
-# Brain data (personal knowledge graph)
-brain.json
-
-# ==================== Rust CLI ====================
+# Rust CLI
 cli/target/
-# cli/Cargo.lock  # Uncomment if you want to commit lockfile
-
-# Package lock (use npm for reproducibility)
-# package-lock.json
-
-.marscode
-nano_weights.bin.json
-
-target/*
+target/
