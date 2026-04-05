@@ -4,58 +4,36 @@
 use lazy_static::lazy_static;
 use std::collections::HashSet;
 
-// Stop words (Chinese + English)
+// Stop words loaded from stop-words crate
 lazy_static! {
-    static ref STOP_WORDS: HashSet<&'static str> = {
-        let mut s = HashSet::new();
-        // Chinese stop words
-        s.insert("的"); s.insert("是"); s.insert("在"); s.insert("了"); s.insert("和");
-        s.insert("与"); s.insert("或"); s.insert("有"); s.insert("这"); s.insert("那");
-        s.insert("个"); s.insert("一"); s.insert("不"); s.insert("也"); s.insert("都");
-        s.insert("就"); s.insert("而"); s.insert("及"); s.insert("以"); s.insert("对");
-        s.insert("可"); s.insert("能"); s.insert("会"); s.insert("被"); s.insert("于");
-        s.insert("从"); s.insert("到"); s.insert("把"); s.insert("将"); s.insert("为");
-        s.insert("但"); s.insert("却"); s.insert("又"); s.insert("如"); s.insert("因");
-        s.insert("所"); s.insert("并"); s.insert("其"); s.insert("之"); s.insert("来");
-        s.insert("去"); s.insert("上"); s.insert("下"); s.insert("中"); s.insert("大");
-        s.insert("小"); s.insert("多"); s.insert("少"); s.insert("最"); s.insert("更");
-        s.insert("很"); s.insert("太"); s.insert("过"); s.insert("要"); s.insert("该");
-        s.insert("我们"); s.insert("你们"); s.insert("他们"); s.insert("她们");
-        s.insert("它们"); s.insert("这个"); s.insert("那个"); s.insert("可以");
-        s.insert("没有"); s.insert("这样"); s.insert("那样"); s.insert("自己");
-        s.insert("已经"); s.insert("因为"); s.insert("所以"); s.insert("但是");
-        s.insert("而且"); s.insert("或者"); s.insert("如果"); s.insert("虽然");
-        s.insert("只是"); s.insert("就是"); s.insert("还是"); s.insert("应该");
-        s.insert("需要"); s.insert("可能"); s.insert("关于");
-        // More Chinese stop words
-        s.insert("一个"); s.insert("一种"); s.insert("之"); s.insert("者");
-        s.insert("着"); s.insert("过"); s.insert("得"); s.insert("地");
-        s.insert("等"); s.insert("当"); s.insert("给"); s.insert("让");
-        s.insert("使"); s.insert("比"); s.insert("由"); s.insert("此");
-        // English stop words
-        s.insert("the"); s.insert("a"); s.insert("an"); s.insert("is"); s.insert("are");
-        s.insert("was"); s.insert("were"); s.insert("be"); s.insert("been"); s.insert("being");
-        s.insert("have"); s.insert("has"); s.insert("had"); s.insert("do"); s.insert("does");
-        s.insert("did"); s.insert("will"); s.insert("would"); s.insert("could"); s.insert("should");
-        s.insert("may"); s.insert("might"); s.insert("must"); s.insert("shall"); s.insert("can");
-        s.insert("need"); s.insert("dare"); s.insert("ought"); s.insert("used"); s.insert("to");
-        s.insert("of"); s.insert("in"); s.insert("for"); s.insert("on"); s.insert("with");
-        s.insert("at"); s.insert("by"); s.insert("from"); s.insert("as"); s.insert("into");
-        s.insert("through"); s.insert("during"); s.insert("before"); s.insert("after");
-        s.insert("above"); s.insert("below"); s.insert("between"); s.insert("under");
-        s.insert("again"); s.insert("further"); s.insert("then"); s.insert("once");
-        s.insert("and"); s.insert("but"); s.insert("or"); s.insert("nor"); s.insert("so");
-        s.insert("yet"); s.insert("both"); s.insert("either"); s.insert("neither");
-        s.insert("not"); s.insert("only"); s.insert("own"); s.insert("same"); s.insert("than");
-        s.insert("too"); s.insert("very"); s.insert("just"); s.insert("also"); s.insert("now");
-        s.insert("here"); s.insert("there"); s.insert("when"); s.insert("where"); s.insert("why");
-        s.insert("how"); s.insert("all"); s.insert("each"); s.insert("every"); s.insert("few");
-        s.insert("more"); s.insert("most"); s.insert("other"); s.insert("some"); s.insert("such");
-        s.insert("no"); s.insert("any"); s.insert("what"); s.insert("which"); s.insert("who");
-        s.insert("whom"); s.insert("this"); s.insert("that"); s.insert("these"); s.insert("those");
-        s.insert("it"); s.insert("its"); s.insert("i"); s.insert("me"); s.insert("my");
-        s.insert("we"); s.insert("our"); s.insert("you"); s.insert("your"); s.insert("he");
-        s.insert("she"); s.insert("him"); s.insert("her"); s.insert("his");
+    static ref STOP_WORDS: HashSet<String> = {
+        let mut s: HashSet<String> = HashSet::new();
+
+        // Load Chinese stop words from stop-words crate
+        let zh_stopwords = stop_words::get(stop_words::LANGUAGE::Chinese);
+        for word in zh_stopwords {
+            s.insert(word.to_string());
+        }
+
+        // Load English stop words from stop-words crate
+        let en_stopwords = stop_words::get(stop_words::LANGUAGE::English);
+        for word in en_stopwords {
+            s.insert(word.to_lowercase());
+        }
+
+        // Add some additional common Chinese stop words not in the library
+        let extra_zh = [
+            "个", "一", "不", "也", "都", "就", "而", "及", "以", "对",
+            "可", "能", "会", "被", "于", "从", "到", "把", "将", "为",
+            "但", "却", "又", "如", "因", "所", "并", "其", "之", "来",
+            "去", "上", "下", "中", "大", "小", "多", "少", "最", "更",
+            "很", "太", "过", "要", "该", "它", "此", "则", "着", "过",
+            "得", "地", "等", "当", "给", "让", "使", "比", "由", "出",
+        ];
+        for word in extra_zh {
+            s.insert(word.to_string());
+        }
+
         s
     };
 }

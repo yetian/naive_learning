@@ -172,4 +172,5 @@ CLI data path: `~/.local/share/seed-intelligence/brain.json`
 - `tokio` - Async runtime
 - `directories` - Platform-specific data directories
 - `jieba-rs` - Chinese word segmentation
+- `stop-words` - Stop words for multiple languages (Chinese, English, etc.)
 - `candle-core` / `candle-nn` - Deep learning framework for LM

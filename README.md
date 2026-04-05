@@ -388,6 +388,7 @@ naive_learning/
 - `reqwest` - HTTP 客户端
 - `tokio` - 异步运行时
 - `jieba-rs` - 中文分词
+- `stop-words` - 多语言停用词 (中文、英文等 60+ 语言)
 - `candle-core/candle-nn` - 深度学习框架
 
 ### 外部工具

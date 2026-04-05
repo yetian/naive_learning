@@ -29,6 +29,9 @@ candle-nn = "0.8"
 # Chinese word segmentation
 jieba-rs = "0.7"
 
+# Stop words library
+stop-words = "0.10"
+
 [profile.release]
 strip = true
 lto = true
