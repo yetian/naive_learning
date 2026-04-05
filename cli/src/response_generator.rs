@@ -1,8 +1,5 @@
 // Response Generator - Converts graph knowledge to natural language
-// Uses templates and optional LM refinement
-
-use crate::brain::Brain;
-use crate::lm;
+// Uses templates to generate human-readable answers from graph relations
 
 /// Relationship types that can be inferred
 #[derive(Debug, Clone, PartialEq)]
@@ -12,7 +9,6 @@ pub enum RelationType {
     RelatedTo,   // A 与 B 相关 (A is related to B)
     Causes,      // A 导致 B (A causes B)
     HasProperty, // A 具有 B 属性 (A has property B)
-    Unknown,     // 未知关系
 }
 
 /// Infer relationship type from concept names
@@ -75,9 +71,6 @@ pub fn relation_to_sentence(source: &str, target: &str, weight: f64, rel_type: &
             } else {
                 format!("{}与{}存在一定的联系。", source, target)
             }
-        }
-        RelationType::Unknown => {
-            format!("{}与{}相关。", source, target)
         }
     }
 }
@@ -224,63 +217,6 @@ pub fn generate_multi_concept_answer(
     }
 
     response
-}
-
-/// Use local LM to refine the answer (make it more natural)
-pub fn refine_with_lm(answer: &str, _concepts: &[String], model: Option<&lm::CausalLM>) -> String {
-    // If no model provided, return original
-    let model = match model {
-        Some(m) => m,
-        None => return answer.to_string(),
-    };
-
-    // Create a prompt for refinement
-    let prompt = format!(
-        "请用更自然的语言重述：{}",
-        answer.chars().take(200).collect::<String>()
-    );
-
-    // Generate refined text (short)
-    let refined = model.generate(&prompt, 50, 0.8);
-
-    // If refinement is too short or empty, return original
-    if refined.len() < 10 {
-        return answer.to_string();
-    }
-
-    refined
-}
-
-/// Main function to generate human-readable answer
-pub fn generate_human_answer(
-    question: &str,
-    _brain: &Brain,
-    matches: &[String],
-    paths: &[Vec<String>],
-    path_details: &[(String, String, f64)],
-    related: &[(String, f64)],
-) -> String {
-    // Determine query type
-    if matches.len() == 1 {
-        // Single concept query
-        generate_single_concept_answer(&matches[0], related)
-    } else if matches.len() >= 2 && !paths.is_empty() {
-        // Multi-concept query with path
-        generate_multi_concept_answer(matches, &paths[0], path_details)
-    } else if matches.len() >= 2 {
-        // Multi-concept but no path
-        let concepts_str = matches.join("和");
-        format!(
-            "你提到了{}这两个概念。目前我还没有发现它们之间的直接关联。\n\n如果你能提供更多上下文，我可以更好地回答你的问题。",
-            concepts_str
-        )
-    } else {
-        // No matches
-        format!(
-            "我暂时没有找到与\"{}\"相关的信息。\n\n你可以使用 `./seed init \"概念名\"` 或 `./seed learn-file <文件>` 来帮助我学习新知识。",
-            question
-        )
-    }
 }
 
 #[cfg(test)]

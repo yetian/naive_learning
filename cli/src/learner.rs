@@ -5,8 +5,8 @@ use crate::brain::Brain;
 use crate::nlp::Tokenizer;
 use std::time::Instant;
 
+// Learning parameters
 const WINDOW_SIZE: usize = 6;
-const DECAY_RATE: f64 = 0.95;
 const MIN_WEIGHT: f64 = 0.01;
 const MIN_ENERGY: f64 = 0.1;
 const ENERGY_PER_MENTION: f64 = 0.1;

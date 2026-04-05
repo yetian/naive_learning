@@ -21,7 +21,7 @@ struct DesktopUrl {
     page: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub title: String,
     pub snippet: String,

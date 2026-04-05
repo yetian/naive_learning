@@ -383,12 +383,11 @@ impl FeedForward {
 /// Trainer for the language model
 pub struct Trainer {
     pub model: CausalLM,
-    learning_rate: f64,
 }
 
 impl Trainer {
-    pub fn new(model: CausalLM, learning_rate: f64) -> Self {
-        Self { model, learning_rate }
+    pub fn new(model: CausalLM, _learning_rate: f64) -> Self {
+        Self { model }
     }
 
     /// Train on text data (simplified - demonstrates the API)

@@ -435,10 +435,13 @@ fn run_repl(learner: &mut learner::IncrementalLearner, brain_path: PathBuf) {
     println!("\n╔═══════════════════════════════════════════╗");
     println!("║     🌱 Seed-Intelligence REPL             ║");
     println!("╠═══════════════════════════════════════════╣");
-    println!("║  直接输入问题进行问答                       ║");
-    println!("║  /help 查看所有命令                        ║");
+    println!("║  直接输入问题进行问答                     ║");
+    println!("║  /help 查看所有命令                       ║");
     println!("║  /exit 或 Ctrl+C 退出                     ║");
     println!("╚═══════════════════════════════════════════╝\n");
+
+    // Get a handle to the current runtime
+    let rt = tokio::runtime::Handle::current();
 
     loop {
         print!("> ");
@@ -460,7 +463,7 @@ fn run_repl(learner: &mut learner::IncrementalLearner, brain_path: PathBuf) {
         }
 
         if input.starts_with('/') {
-            handle_command(input, learner, &brain_path);
+            handle_command(input, learner, &brain_path, &rt);
         } else {
             // Treat as question
             let answer = inference::ask(input, &learner.brain);
@@ -472,7 +475,7 @@ fn run_repl(learner: &mut learner::IncrementalLearner, brain_path: PathBuf) {
     }
 }
 
-fn handle_command(input: &str, learner: &mut learner::IncrementalLearner, brain_path: &PathBuf) {
+fn handle_command(input: &str, learner: &mut learner::IncrementalLearner, brain_path: &PathBuf, rt: &tokio::runtime::Handle) {
     let parts: Vec<&str> = input.splitn(2, ' ').collect();
     let cmd = parts[0].to_lowercase();
     let args = parts.get(1).map(|s| *s).unwrap_or("");
@@ -529,9 +532,11 @@ fn handle_command(input: &str, learner: &mut learner::IncrementalLearner, brain_
             if args.is_empty() {
                 println!("用法: /init <概念>");
             } else {
-                // Use async runtime for init
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(run_init(learner, args, true));
+                // Use block_in_place to allow blocking within async context
+                let concept = args.to_string();
+                tokio::task::block_in_place(|| {
+                    rt.block_on(run_init(learner, &concept, true));
+                });
             }
         }
         "/reload" => {

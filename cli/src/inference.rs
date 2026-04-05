@@ -1,9 +1,19 @@
 // Inference Engine - Graph-based Q&A using path aggregation
+//
+// This module provides the core Q&A functionality:
+// - Parse queries into keywords
+// - Find matching concepts in the knowledge graph
+// - Discover paths between concepts
+// - Aggregate answers from graph traversal
 
 use crate::brain::Brain;
 use crate::nlp::{filter_stop_words, tokenize};
 use crate::response_generator;
 use std::collections::{HashMap, HashSet, VecDeque};
+
+// =============================================================================
+// Query Parsing
+// =============================================================================
 
 /// Parse user question into keywords
 pub fn parse_query(question: &str) -> Vec<String> {
@@ -53,14 +63,20 @@ pub fn find_matching_concepts(query_words: &[String], brain: &Brain) -> Vec<Matc
     matches
 }
 
-/// Build adjacency list from brain
+// =============================================================================
+// Graph Traversal
+// =============================================================================
+
+/// Build adjacency list from brain relations
 fn build_adjacency(brain: &Brain) -> HashMap<String, Vec<(String, f64)>> {
     let mut adj: HashMap<String, Vec<(String, f64)>> = HashMap::new();
 
     for rel in brain.relations.values() {
-        adj.entry(rel.source.clone()).or_default()
+        adj.entry(rel.source.clone())
+            .or_default()
             .push((rel.target.clone(), rel.weight));
-        adj.entry(rel.target.clone()).or_default()
+        adj.entry(rel.target.clone())
+            .or_default()
             .push((rel.source.clone(), rel.weight));
     }
 
@@ -71,8 +87,8 @@ fn build_adjacency(brain: &Brain) -> HashMap<String, Vec<(String, f64)>> {
 pub fn find_paths(start_concept: &str, brain: &Brain, max_depth: usize) -> Vec<Vec<String>> {
     let adj = build_adjacency(brain);
     let mut paths = Vec::new();
-
     let mut queue: VecDeque<(String, Vec<String>)> = VecDeque::new();
+
     queue.push_back((start_concept.to_string(), vec![start_concept.to_string()]));
 
     while let Some((current, path)) = queue.pop_front() {
@@ -95,7 +111,7 @@ pub fn find_paths(start_concept: &str, brain: &Brain, max_depth: usize) -> Vec<V
     paths
 }
 
-/// Dijkstra to find best path between two nodes
+/// Dijkstra's algorithm to find the highest-weight path between two nodes
 pub fn dijkstra(start: &str, end: &str, brain: &Brain) -> Option<Vec<String>> {
     let adj = build_adjacency(brain);
 
@@ -103,13 +119,13 @@ pub fn dijkstra(start: &str, end: &str, brain: &Brain) -> Option<Vec<String>> {
     let mut prev: HashMap<String, Option<String>> = HashMap::new();
     let mut visited = HashSet::new();
 
-    // Initialize
+    // Initialize distances
     for node in brain.concepts.keys() {
         dist.insert(node.clone(), f64::NEG_INFINITY);
     }
     dist.insert(start.to_string(), 0.0);
 
-    // Priority queue (using simple Vec and sort)
+    // Priority queue (using simple Vec and sort by highest weight)
     let mut pq: Vec<(String, f64)> = vec![(start.to_string(), 0.0)];
 
     while let Some((current, _weight)) = pq.pop() {
@@ -147,6 +163,11 @@ pub fn dijkstra(start: &str, end: &str, brain: &Brain) -> Option<Vec<String>> {
         return None;
     }
 
+    reconstruct_path(end, &prev)
+}
+
+/// Reconstruct path from previous nodes map
+fn reconstruct_path(end: &str, prev: &HashMap<String, Option<String>>) -> Option<Vec<String>> {
     let mut path = Vec::new();
     let mut current = Some(end.to_string());
 
@@ -156,11 +177,7 @@ pub fn dijkstra(start: &str, end: &str, brain: &Brain) -> Option<Vec<String>> {
     }
 
     path.reverse();
-    if path.first() == Some(&start.to_string()) {
-        Some(path)
-    } else {
-        None
-    }
+    Some(path)
 }
 
 /// Find best path between two nodes with details
@@ -174,10 +191,10 @@ pub fn find_best_path(node_a: &str, node_b: &str, brain: &Brain) -> Option<PathR
         let source = &path[i];
         let target = &path[i + 1];
 
-        // Find the edge
+        // Find the edge weight
         for rel in brain.relations.values() {
-            if (rel.source.as_str() == source.as_str() && rel.target.as_str() == target.as_str())
-                || (rel.source.as_str() == target.as_str() && rel.target.as_str() == source.as_str())
+            if (rel.source == *source && rel.target == *target)
+                || (rel.source == *target && rel.target == *source)
             {
                 path_details.push(PathEdge {
                     from: source.clone(),
@@ -196,6 +213,10 @@ pub fn find_best_path(node_a: &str, node_b: &str, brain: &Brain) -> Option<PathR
         total_weight,
     })
 }
+
+// =============================================================================
+// Answer Generation
+// =============================================================================
 
 /// Aggregate paths into answer
 pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, question: &str) -> Answer {
@@ -224,8 +245,8 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, question: &str) ->
 
             // Find relation
             for rel in brain.relations.values() {
-                if (rel.source.as_str() == path[i].as_str() && rel.target.as_str() == path[i + 1].as_str())
-                    || (rel.source.as_str() == path[i + 1].as_str() && rel.target.as_str() == path[i].as_str())
+                if (rel.source == path[i] && rel.target == path[i + 1])
+                    || (rel.source == path[i + 1] && rel.target == path[i])
                 {
                     all_relations.push((rel.source.clone(), rel.target.clone(), rel.weight));
                     break;
@@ -238,10 +259,9 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, question: &str) ->
 
     // Use response generator for human-readable answer
     let main_concepts_set: HashSet<_> = main_concepts.iter().cloned().collect();
-    let related: Vec<(String, f64)> = all_relations.iter()
-        .filter(|(s, t, _)| {
-            main_concepts_set.contains(s) || main_concepts_set.contains(t)
-        })
+    let related: Vec<(String, f64)> = all_relations
+        .iter()
+        .filter(|(s, t, _)| main_concepts_set.contains(s) || main_concepts_set.contains(t))
         .map(|(s, t, w)| {
             if main_concepts_set.contains(s) {
                 (t.clone(), *w)
@@ -267,7 +287,7 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, question: &str) ->
     Answer {
         answer,
         confidence: (avg_weight * 100.0) as u32,
-        paths: paths.iter().take(5).map(|p| p.clone()).collect(),
+        paths: paths.iter().take(5).cloned().collect(),
         concepts: main_concepts.iter().map(|s| s.to_string()).collect(),
         associations: None,
         elapsed_ms: 0,
@@ -292,7 +312,10 @@ pub fn query(question: &str, brain: &Brain) -> Answer {
     println!("[Query] Parsed words: {:?}", query_words);
 
     let matches = find_matching_concepts(&query_words, brain);
-    println!("[Query] Matched concepts: {:?}", matches.iter().map(|m| &m.concept_name).collect::<Vec<_>>());
+    println!(
+        "[Query] Matched concepts: {:?}",
+        matches.iter().map(|m| &m.concept_name).collect::<Vec<_>>()
+    );
 
     if matches.is_empty() {
         return Answer {
@@ -317,9 +340,7 @@ pub fn query(question: &str, brain: &Brain) -> Answer {
         }
     }
 
-    // Deduplicate
     all_paths.dedup();
-
     aggregate_answer(&all_paths, brain, question)
 }
 
@@ -343,79 +364,95 @@ pub fn ask(question: &str, brain: &Brain) -> Answer {
     }
 
     // Get unique entities
-    let unique_entities: Vec<_> = matches.iter().map(|m| m.concept_name.clone()).collect();
-    let unique_entities: Vec<_> = unique_entities.into_iter().collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let unique_entities: HashSet<String> = matches.iter().map(|m| m.concept_name.clone()).collect();
+    let unique_entities: Vec<String> = unique_entities.into_iter().collect();
 
     // Single concept: free association
     if unique_entities.len() == 1 {
-        let concept = &unique_entities[0];
-
-        // Find top connections
-        let mut connections: Vec<_> = brain.relations.iter()
-            .filter(|(_, r)| r.source.as_str() == concept.as_str() || r.target.as_str() == concept.as_str())
-            .map(|(_, r)| {
-                let target = if r.source.as_str() == concept.as_str() { &r.target } else { &r.source };
-                (target.clone(), r.weight)
-            })
-            .collect();
-
-        connections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let top5: Vec<_> = connections.iter().take(5).map(|(t, w)| (t.clone(), *w)).collect();
-
-        // Use response generator
-        let answer = response_generator::generate_single_concept_answer(concept, &top5);
-
-        return Answer {
-            answer,
-            confidence: if !top5.is_empty() { (top5[0].1 * 100.0) as u32 } else { 0 },
-            associations: Some(top5.iter().map(|(t, w)| Association {
-                concept: t.clone(),
-                weight: *w,
-            }).collect()),
-            concepts: vec![concept.clone()],
-            paths: vec![],
-            elapsed_ms: 0,
-        };
+        return answer_single_concept(&unique_entities[0], brain);
     }
 
     // Multiple concepts: path finding
+    answer_multi_concept(&unique_entities, brain)
+}
+
+/// Generate answer for a single concept
+fn answer_single_concept(concept: &str, brain: &Brain) -> Answer {
+    let mut connections: Vec<_> = brain
+        .relations
+        .iter()
+        .filter(|(_, r)| r.source == concept || r.target == concept)
+        .map(|(_, r)| {
+            let target = if r.source == concept {
+                &r.target
+            } else {
+                &r.source
+            };
+            (target.clone(), r.weight)
+        })
+        .collect();
+
+    connections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let top5: Vec<_> = connections.iter().take(5).map(|(t, w)| (t.clone(), *w)).collect();
+
+    let answer = response_generator::generate_single_concept_answer(concept, &top5);
+
+    Answer {
+        answer,
+        confidence: if !top5.is_empty() { (top5[0].1 * 100.0) as u32 } else { 0 },
+        associations: Some(
+            top5.iter()
+                .map(|(t, w)| Association {
+                    concept: t.clone(),
+                    weight: *w,
+                })
+                .collect(),
+        ),
+        concepts: vec![concept.to_string()],
+        paths: vec![],
+        elapsed_ms: 0,
+    }
+}
+
+/// Generate answer for multiple concepts
+fn answer_multi_concept(entities: &[String], brain: &Brain) -> Answer {
     let mut all_paths = Vec::new();
     let mut all_path_details: Vec<(String, String, f64)> = Vec::new();
 
-    for i in 0..unique_entities.len() {
-        for j in (i + 1)..unique_entities.len() {
-            let node_a = &unique_entities[i];
-            let node_b = &unique_entities[j];
-
-            if let Some(path_result) = find_best_path(node_a, node_b, brain) {
+    for i in 0..entities.len() {
+        for j in (i + 1)..entities.len() {
+            if let Some(path_result) = find_best_path(&entities[i], &entities[j], brain) {
                 for edge in &path_result.path_details {
                     all_path_details.push((edge.from.clone(), edge.to.clone(), edge.weight));
                 }
-                all_paths.push(PathResult {
-                    path: path_result.path,
-                    path_details: path_result.path_details,
-                    total_weight: path_result.total_weight,
-                });
+                all_paths.push(path_result);
             }
         }
     }
 
-    // Use response generator for multi-concept answer
     let answer = if all_paths.is_empty() {
         format!(
             "\"{}\"和\"{}\"是两个不同的概念。目前我还没有发现它们之间的直接关联。\n\n如果你能告诉我更多关于它们的关系，我可以更好地理解。",
-            unique_entities[0],
-            unique_entities.get(1).map(|s| s.as_str()).unwrap_or("其他概念")
+            entities[0],
+            entities.get(1).map(|s| s.as_str()).unwrap_or("其他概念")
         )
     } else {
         // Sort by total weight
-        all_paths.sort_by(|a, b| b.total_weight.partial_cmp(&a.total_weight).unwrap_or(std::cmp::Ordering::Equal));
+        all_paths.sort_by(|a, b| {
+            b.total_weight
+                .partial_cmp(&a.total_weight)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let best = &all_paths[0];
 
         response_generator::generate_multi_concept_answer(
-            &unique_entities,
+            entities,
             &best.path,
-            &best.path_details.iter().map(|e| (e.from.clone(), e.to.clone(), e.weight)).collect::<Vec<_>>(),
+            &best
+                .path_details
+                .iter()
+                .map(|e| (e.from.clone(), e.to.clone(), e.weight))
+                .collect::<Vec<_>>(),
         )
     };
 
@@ -429,13 +466,16 @@ pub fn ask(question: &str, brain: &Brain) -> Answer {
         answer,
         confidence,
         paths: all_paths.iter().take(3).map(|p| p.path.clone()).collect(),
-        concepts: unique_entities,
+        concepts: entities.to_vec(),
         associations: None,
         elapsed_ms: 0,
     }
 }
 
-// Types
+// =============================================================================
+// Data Types
+// =============================================================================
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Match {
     pub word: String,

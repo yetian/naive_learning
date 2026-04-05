@@ -116,23 +116,6 @@ impl TokenizerWrapper {
 
         tokens
     }
-
-    /// Tokenize and filter stop words
-    pub fn tokenize_filtered(&self, text: &str) -> Vec<String> {
-        self.tokenize(text)
-    }
-
-    /// Get token IDs for model input (character-level)
-    pub fn encode(&self, text: &str) -> Vec<u32> {
-        text.chars().map(|c| c as u32).collect()
-    }
-
-    /// Decode token IDs back to text
-    pub fn decode(&self, ids: &[u32]) -> String {
-        ids.iter()
-            .filter_map(|&id| char::from_u32(id))
-            .collect()
-    }
 }
 
 impl Default for TokenizerWrapper {
