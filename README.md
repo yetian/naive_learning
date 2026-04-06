@@ -151,7 +151,7 @@ cp target/release/seed-intelligence ../seed
 从文件中读取内容学习，支持多种格式。
 
 ```bash
-./seed learn-file <file> [--focus <concept>] [--rate <lines_per_sec>]
+./seed learn-file <file> [--focus <concept>] [--batch <lines>]
 
 # 示例 - TXT 文件
 ./seed learn-file ./books/ai_basics.txt
@@ -165,8 +165,8 @@ cp target/release/seed-intelligence ../seed
 # 示例 - PDF 文档
 ./seed learn-file ./documents/research_paper.pdf
 
-# 示例 - 带聚焦概念和速率控制
-./seed learn-file ./books/ai_textbook.epub --focus "神经网络" --rate 50
+# 示例 - 带聚焦概念和批处理大小
+./seed learn-file ./books/ai_textbook.epub --focus "神经网络" --batch 1000
 ```
 
 **支持的格式:**
@@ -179,7 +179,7 @@ cp target/release/seed-intelligence ../seed
 **参数:**
 - `file`: 文件路径
 - `--focus`: 聚焦概念
-- `--rate`: 每秒处理行数，默认 100
+- `--batch`: 每批处理行数，默认 500。值越大速度越快，但内存占用越高
 
 **依赖安装:**
 ```bash
@@ -476,10 +476,12 @@ naive_learning/
 
 ## 数据存储
 
-- **知识图谱**: `~/.local/share/seed-intelligence/brain.json`
+- **知识图谱**: `~/.local/share/seed-intelligence/brain.db` (SQLite 数据库)
 - **LM 权重**: `~/.local/share/seed-intelligence/lm_weights.json`
 
 使用 `-b` 选项指定自定义路径。
+
+**性能优化**: 学习引擎使用内存批量累积 + 单事务 UPSERT 写入，处理速度约 ~15-30ms/批，比之前快约 500 倍。
 
 ---
 

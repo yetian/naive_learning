@@ -238,6 +238,50 @@ impl Brain {
         ).ok();
     }
 
+    /// Apply batch updates efficiently using a single transaction
+    /// Returns (relations_updated, concepts_updated)
+    pub fn apply_batch(&mut self, batch: crate::learner::LearningBatch) -> (u32, u32) {
+        let tx = self.conn.transaction().expect("Failed to start transaction");
+        let now = current_timestamp();
+        let now_ms = current_millis();
+
+        let mut relations_count = 0u32;
+        let mut concepts_count = 0u32;
+
+        // Batch insert/update concepts using UPSERT
+        for (name, (energy_delta, count_delta)) in &batch.concepts {
+            tx.execute(
+                "INSERT INTO concepts (name, energy, count, first_seen, last_seen, description)
+                 VALUES (?1, ?2, ?3, ?4, ?4, NULL)
+                 ON CONFLICT(name) DO UPDATE SET
+                    energy = energy + excluded.energy,
+                    count = count + excluded.count,
+                    last_seen = excluded.last_seen",
+                params![name, *energy_delta, *count_delta, now]
+            ).ok();
+            concepts_count += 1;
+        }
+
+        // Batch insert/update relations using UPSERT
+        for (_, (weight_delta, count_delta, source, target)) in &batch.relations {
+            let id = format!("rel_{}_{}", source, target);
+            tx.execute(
+                "INSERT INTO relations (id, source, target, weight, count, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(id) DO UPDATE SET
+                    weight = MIN(weight + excluded.weight, 1.0),
+                    count = count + excluded.count,
+                    last_updated = excluded.last_updated",
+                params![id, source, target, *weight_delta, *count_delta, now_ms]
+            ).ok();
+            relations_count += 1;
+        }
+
+        tx.commit().expect("Failed to commit transaction");
+
+        (relations_count, concepts_count)
+    }
+
     /// Set the description for a concept
     pub fn set_concept_description(&mut self, name: &str, description: &str) {
         if description.is_empty() {

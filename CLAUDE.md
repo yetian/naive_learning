@@ -58,7 +58,8 @@ The CLI supports learning from multiple file formats:
 
 | Module | File | Purpose |
 |--------|------|---------|
-| **IncrementalLearner** | `cli/src/learner.rs` | Hebbian learning engine with sliding window co-occurrence, energy-based concept solidification, decay/pruning |
+| **IncrementalLearner** | `cli/src/learner.rs` | Hebbian learning engine with sliding window co-occurrence, energy-based concept solidification, decay/pruning. Uses in-memory batching + single transaction for ~500x faster learning |
+| **Brain** | `cli/src/brain.rs` | SQLite-backed knowledge graph with UPSERT pattern for efficient batch writes |
 | **Inference Engine** | `cli/src/inference.rs` | Graph-based Q&A using path aggregation, multi-word phrase matching |
 | **Crawler** | `cli/src/crawler.rs` | Multi-language Wikipedia search (11 languages) + DuckDuckGo API |
 | **NLP** | `cli/src/nlp.rs` | Tokenization (Jieba for Chinese), word frequency, co-occurrence extraction |
@@ -71,8 +72,8 @@ The CLI supports learning from multiple file formats:
 |---------|-------|
 | `./seed` | Start REPL interactive mode |
 | `./seed ask <question>` | Q&A with concept descriptions |
-| `./seed learn-text <text>` | Learn from text |
-| `./seed learn-file <file>` | Learn from file (txt, epub, mobi, azw3, pdf) |
+| `./seed learn-text <text>` | Learn from text (~15-30ms per batch) |
+| `./seed learn-file <file> [--batch N]` | Learn from file with configurable batch size (default: 500 lines) |
 | `./seed init <concept>` | Initialize and learn from web |
 | `./seed observe` | Embodied intelligence mode (watch files, clipboard, commands) |
 | `./seed stats` | View statistics |
@@ -84,23 +85,30 @@ The CLI supports learning from multiple file formats:
 | `./seed train-file <file>` | Train LM from file |
 | `./seed generate <prompt>` | Generate text with local LM |
 
-### Data Structure (brain.json v2.1)
+### Data Storage (SQLite)
 
-```json
-{
-  "concepts": {
-    "概念名": {
-      "energy": 1.2,
-      "count": 45,
-      "firstSeen": "...",
-      "lastSeen": "...",
-      "description": "概念的定义说明（来自Wikipedia）"
-    }
-  },
-  "relations": {
-    "rel_xxx": { "source": "A", "target": "B", "weight": 0.85, "count": 10 }
-  }
-}
+The knowledge graph is stored in `~/.local/share/seed-intelligence/brain.db` (SQLite):
+
+```sql
+-- Concepts table
+CREATE TABLE concepts (
+    name TEXT PRIMARY KEY,
+    energy REAL NOT NULL DEFAULT 0.1,
+    count INTEGER NOT NULL DEFAULT 1,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    description TEXT
+);
+
+-- Relations table
+CREATE TABLE relations (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    target TEXT NOT NULL,
+    weight REAL NOT NULL DEFAULT 0.0,
+    count INTEGER NOT NULL DEFAULT 0,
+    last_updated INTEGER NOT NULL
+);
 ```
 
 ### Multi-language Support
@@ -153,9 +161,10 @@ The `observe` command enables embodied intelligence mode where Seed learns from 
 ## Key Design Principles
 
 1. **Memory Efficient**: Stream processing for large files, never loads full file into memory
-2. **CPU Friendly**: Rate-controlled file reading, no heavy computation
+2. **CPU Friendly**: Batch processing with single SQLite transaction (~500x faster than per-token writes)
 3. **No LLM for Q&A**: Q&A uses graph traversal (Dijkstra/BFS), not generative AI
 4. **Security**: Sandbox environment blocks `../` path traversal attempts
+5. **Fast Learning**: In-memory batch accumulation + UPSERT pattern for efficient DB writes
 
 ## Building CLI
 
@@ -165,7 +174,7 @@ cargo build --release
 cp target/release/seed-intelligence ../seed
 ```
 
-CLI data path: `~/.local/share/seed-intelligence/brain.json`
+CLI data path: `~/.local/share/seed-intelligence/brain.db` (SQLite)
 
 ## Dependencies
 

@@ -96,9 +96,9 @@ enum Commands {
         file: PathBuf,
         /// Focus concept (ontology anchoring)
         focus: Option<String>,
-        /// Lines per second (rate control)
-        #[arg(short, long, default_value = "100")]
-        rate: u32,
+        /// Lines per batch (higher = faster, more memory)
+        #[arg(short = 'b', long, default_value = "500")]
+        batch: usize,
         /// Force re-learning even if already processed
         #[arg(short, long)]
         force: bool,
@@ -378,7 +378,7 @@ fn run_train(learner: &learner::IncrementalLearner, text: &str, epochs: u32) {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
-fn run_learn_file(learner: &mut learner::IncrementalLearner, file_path: &PathBuf, focus: Option<&str>, rate: u32, force: bool) {
+fn run_learn_file(learner: &mut learner::IncrementalLearner, file_path: &PathBuf, focus: Option<&str>, batch_size: usize, force: bool) {
     println!("\n📚 Learning from file: {:?}", file_path);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
@@ -392,12 +392,10 @@ fn run_learn_file(learner: &mut learner::IncrementalLearner, file_path: &PathBuf
     }
     println!("📄 Format: {}", metadata.format);
     println!("📊 Size: {} bytes", file_size);
+    println!("📦 Batch size: {} lines", batch_size);
 
     // Compute hash while streaming
     println!("\n🔍 Computing file hash...");
-
-    let batch_size = 10;
-    let delay_ms = 1000 / rate.max(1);
 
     // First pass: compute hash and check if already learned
     let result = file_reader::stream_read_file_with_hash(file_path, batch_size, |_| {});
@@ -437,9 +435,6 @@ fn run_learn_file(learner: &mut learner::IncrementalLearner, file_path: &PathBuf
             let learn_result = file_reader::stream_read_file(file_path, batch_size, |text| {
                 let result = learner.learn_from_text(text, focus);
                 concepts_count += result.concepts_updated as i64;
-
-                // Rate control
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms as u64));
             });
 
             // End book context
@@ -856,8 +851,8 @@ async fn main() {
         Some(Commands::Train { text, epochs }) => {
             run_train(&learner, &text, epochs);
         }
-        Some(Commands::LearnFile { file, focus, rate, force }) => {
-            run_learn_file(&mut learner, &file, focus.as_deref(), rate, force);
+        Some(Commands::LearnFile { file, focus, batch, force }) => {
+            run_learn_file(&mut learner, &file, focus.as_deref(), batch, force);
         }
         Some(Commands::TrainFile { file, epochs }) => {
             run_train_file(&learner, &file, epochs);

@@ -1,10 +1,11 @@
 // IncrementalLearner - Hebbian Learning Engine
 // Based on: "Neurons that fire together, wire together"
 
-use crate::brain::{Brain, BookMetadata};
+use crate::brain::Brain;
 use crate::nlp::Tokenizer;
 use std::path::PathBuf;
 use std::time::Instant;
+use std::collections::{HashMap, HashSet};
 
 // Learning parameters
 const WINDOW_SIZE: usize = 6;
@@ -13,6 +14,24 @@ const MIN_ENERGY: f64 = 0.1;
 const ENERGY_PER_MENTION: f64 = 0.1;
 const FOCUS_BOOST: f64 = 2.0;
 const MAX_TEXT_LENGTH: usize = 50000;
+
+/// In-memory batch for accumulating updates before writing to DB
+#[derive(Default)]
+pub struct LearningBatch {
+    /// Concept name -> (energy_delta, count_delta)
+    pub concepts: HashMap<String, (f64, u32)>,
+    /// Relation key (source|||target) -> (weight_delta, count_delta, source, target)
+    pub relations: HashMap<String, (f64, u32, String, String)>,
+}
+
+/// Create a normalized key for a relation (order-independent)
+fn make_relation_key(a: &str, b: &str) -> String {
+    if a < b {
+        format!("{}|||{}", a, b)
+    } else {
+        format!("{}|||{}", b, a)
+    }
+}
 
 pub struct IncrementalLearner {
     pub brain: Brain,
@@ -75,19 +94,19 @@ impl IncrementalLearner {
 
         println!("[Learner] Processing {} tokens, focus: {:?}", tokens.len(), focus_concept);
 
-        let mut added_relations = 0u32;
-        let mut updated_concepts = 0u32;
-        let mut concepts_in_batch = std::collections::HashSet::new();
+        // Use in-memory batch to accumulate updates
+        let mut batch = LearningBatch::default();
+        let mut concepts_in_batch = HashSet::new();
 
-        // Ensure focus concept exists as a concept (for multi-word concepts)
+        // Ensure focus concept exists (for multi-word concepts)
         if let Some(focus) = focus_concept {
-            self.brain.get_or_create_concept(focus);
-            self.brain.update_concept(focus, ENERGY_PER_MENTION * 2.0, 1);
-            self.track_book_concept(focus);
-            updated_concepts += 1;
+            batch.concepts.entry(focus.to_string())
+                .and_modify(|(e, c)| { *e += ENERGY_PER_MENTION * 2.0; *c += 1; })
+                .or_insert((ENERGY_PER_MENTION * 2.0, 1));
+            concepts_in_batch.insert(focus.to_string());
         }
 
-        // Sliding window processing
+        // Sliding window processing - all in memory
         for i in 0..tokens.len().saturating_sub(1) {
             let window: Vec<_> = tokens[i..].iter().take(WINDOW_SIZE).collect();
 
@@ -109,23 +128,46 @@ impl IncrementalLearner {
                     // Focus concept boost
                     let focus_boost = calculate_focus_boost(word_a, word_b, focus_concept);
 
-                    // Update relation
-                    if self.update_relation(word_a, word_b, distance_decay, focus_boost) {
-                        added_relations += 1;
-                    }
+                    // Calculate weight delta
+                    let weight_delta = distance_decay * focus_boost * 0.1;
+
+                    // Create normalized relation key
+                    let key = make_relation_key(word_a, word_b);
+                    let (source, target) = if word_a < word_b {
+                        (word_a.to_string(), word_b.to_string())
+                    } else {
+                        (word_b.to_string(), word_a.to_string())
+                    };
+
+                    batch.relations.entry(key)
+                        .and_modify(|(w, c, _, _)| { *w += weight_delta; *c += 1; })
+                        .or_insert((weight_delta, 1, source, target));
                 }
             }
 
-            // Update energy for each token in window
+            // Accumulate energy updates in memory
             for token in &window {
                 if is_valid_token(token) {
-                    if self.update_concept_energy(token, focus_concept) {
-                        updated_concepts += 1;
-                        concepts_in_batch.insert(token.to_string());
+                    let mut energy_delta = ENERGY_PER_MENTION;
+
+                    // Focus concept bonus
+                    if let Some(focus) = focus_concept {
+                        if token.to_lowercase().contains(&focus.to_lowercase()) {
+                            energy_delta += ENERGY_PER_MENTION;
+                        }
                     }
+
+                    batch.concepts.entry(token.to_string())
+                        .and_modify(|(e, c)| { *e += energy_delta; *c += 1; })
+                        .or_insert((energy_delta, 1));
+
+                    concepts_in_batch.insert(token.to_string());
                 }
             }
         }
+
+        // Single transaction for all database writes
+        let (added_relations, updated_concepts) = self.brain.apply_batch(batch);
 
         // Track book concepts
         for concept in concepts_in_batch {
@@ -155,45 +197,6 @@ impl IncrementalLearner {
         if let Some(book_id) = self.current_book_id {
             self.brain.track_book_concept(book_id, concept_name);
         }
-    }
-
-    /// Update relation weight using logarithmic growth
-    fn update_relation(&mut self, source: &str, target: &str, distance_decay: f64, focus_boost: f64) -> bool {
-        // Add or get relation
-        let id = self.brain.add_or_update_relation(source, target);
-
-        // Get current relation data
-        if let Some(mut rel) = self.brain.get_relation_mut(source, target) {
-            // Logarithmic growth
-            let new_count = rel.count + 1;
-            let log_growth = (new_count as f64 + 1.0).ln();
-
-            // New weight = old weight + log_growth * distance_decay * focus_boost
-            let weight_delta = log_growth * distance_decay * focus_boost * 0.1;
-
-            self.brain.update_relation(&id, weight_delta, 1);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Update concept energy
-    fn update_concept_energy(&mut self, token: &str, focus_concept: Option<&str>) -> bool {
-        // Ensure concept exists
-        self.brain.get_or_create_concept(token);
-
-        let mut energy_delta = ENERGY_PER_MENTION;
-
-        // Focus concept bonus
-        if let Some(focus) = focus_concept {
-            if token.to_lowercase().contains(&focus.to_lowercase()) {
-                energy_delta += ENERGY_PER_MENTION;
-            }
-        }
-
-        self.brain.update_concept(token, energy_delta, 1);
-        true
     }
 
     /// Cleanup - decay and prune weak connections
