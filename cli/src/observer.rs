@@ -347,7 +347,6 @@ pub fn run_observe_mode(
                         println!("📚 Final learning from remaining observations...");
                         let content = buf.drain();
                         learner.learn_from_text(&content, None);
-                        learner.save()?;
                     }
 
                     println!("👋 Goodbye!");
@@ -447,20 +446,11 @@ pub fn run_observe_mode(
                     let content = buf.drain();
                     let result = learner.learn_from_text(&content, None);
                     println!("📚 Learned: {} tokens, {} relations", result.tokens_processed, result.relations_added);
-
-                    if let Err(e) = learner.save() {
-                        println!("❌ Failed to save: {}", e);
-                    } else {
-                        println!("✅ Saved");
-                    }
+                    println!("✅ Saved (auto-persisted to SQLite)");
                 }
 
                 "/save" => {
-                    if let Err(e) = learner.save() {
-                        println!("❌ Failed to save: {}", e);
-                    } else {
-                        println!("✅ Saved");
-                    }
+                    println!("✅ SQLite auto-persists all changes");
                 }
 
                 _ => {
@@ -486,10 +476,6 @@ pub fn run_observe_mode(
                 println!("📦 Batch threshold reached, learning...");
                 let result = learner.learn_from_text(&content, None);
                 println!("📚 Learned: {} tokens, {} relations", result.tokens_processed, result.relations_added);
-
-                if let Err(e) = learner.save() {
-                    eprintln!("⚠️  Failed to save: {}", e);
-                }
                 println!("");
             }
         }

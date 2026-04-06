@@ -32,6 +32,18 @@ jieba-rs = "0.7"
 # Stop words library
 stop-words = "0.10"
 
+# SQLite storage
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# SHA-256 hashing
+sha2 = "0.10"
+
+# EPUB metadata extraction
+epub = "2.1"
+
+# Date/time formatting
+chrono = "0.4"
+
 # File system watching
 notify = "6.1"
 

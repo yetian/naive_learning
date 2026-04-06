@@ -27,6 +27,9 @@ pub fn find_matching_concepts(query_words: &[String], brain: &Brain) -> Vec<Matc
     let mut matched_names = HashSet::new();
     let mut matched_word_indices = HashSet::new();
 
+    // Get all concepts from SQLite
+    let concepts = brain.get_all_concepts();
+
     // Try multi-word phrases first, longest to shortest (e.g., "Machine Learning" before "machine")
     for phrase_len in (2..=query_words.len().min(4)).rev() {
         for i in 0..=(query_words.len().saturating_sub(phrase_len)) {
@@ -40,7 +43,7 @@ pub fn find_matching_concepts(query_words: &[String], brain: &Brain) -> Vec<Matc
             let phrase_lower = phrase.to_lowercase();
 
             // Case-insensitive match
-            for (concept_name, concept) in &brain.concepts {
+            for (concept_name, concept) in &concepts {
                 if concept_name.to_lowercase() == phrase_lower && !matched_names.contains(concept_name) {
                     matches.push(Match {
                         word: phrase.clone(),
@@ -67,7 +70,7 @@ pub fn find_matching_concepts(query_words: &[String], brain: &Brain) -> Vec<Matc
         let lower_word = word.to_lowercase();
 
         // Exact match (priority)
-        if let Some(concept) = brain.concepts.get(word) {
+        if let Some(concept) = concepts.get(word) {
             if !matched_names.contains(word) {
                 matches.push(Match {
                     word: word.clone(),
@@ -82,7 +85,7 @@ pub fn find_matching_concepts(query_words: &[String], brain: &Brain) -> Vec<Matc
 
         // Fuzzy match (only if no exact match)
         if !matched_word_indices.contains(&idx) {
-            for (concept_name, concept) in &brain.concepts {
+            for (concept_name, concept) in &concepts {
                 if concept_name.to_lowercase().contains(&lower_word)
                     && !matched_names.contains(concept_name)
                 {
@@ -111,7 +114,8 @@ pub fn find_matching_concepts(query_words: &[String], brain: &Brain) -> Vec<Matc
 fn build_adjacency(brain: &Brain) -> HashMap<String, Vec<(String, f64)>> {
     let mut adj: HashMap<String, Vec<(String, f64)>> = HashMap::new();
 
-    for rel in brain.relations.values() {
+    let relations = brain.get_all_relations();
+    for rel in relations.values() {
         adj.entry(rel.source.clone())
             .or_default()
             .push((rel.target.clone(), rel.weight));
@@ -154,13 +158,14 @@ pub fn find_paths(start_concept: &str, brain: &Brain, max_depth: usize) -> Vec<V
 /// Dijkstra's algorithm to find the highest-weight path between two nodes
 pub fn dijkstra(start: &str, end: &str, brain: &Brain) -> Option<Vec<String>> {
     let adj = build_adjacency(brain);
+    let concepts = brain.get_all_concepts();
 
     let mut dist: HashMap<String, f64> = HashMap::new();
     let mut prev: HashMap<String, Option<String>> = HashMap::new();
     let mut visited = HashSet::new();
 
     // Initialize distances
-    for node in brain.concepts.keys() {
+    for node in concepts.keys() {
         dist.insert(node.clone(), f64::NEG_INFINITY);
     }
     dist.insert(start.to_string(), 0.0);
@@ -223,6 +228,7 @@ fn reconstruct_path(end: &str, prev: &HashMap<String, Option<String>>) -> Option
 /// Find best path between two nodes with details
 pub fn find_best_path(node_a: &str, node_b: &str, brain: &Brain) -> Option<PathResult> {
     let path = dijkstra(node_a, node_b, brain)?;
+    let relations = brain.get_all_relations();
 
     let mut path_details = Vec::new();
     let mut total_weight = 0.0;
@@ -232,7 +238,7 @@ pub fn find_best_path(node_a: &str, node_b: &str, brain: &Brain) -> Option<PathR
         let target = &path[i + 1];
 
         // Find the edge weight
-        for rel in brain.relations.values() {
+        for rel in relations.values() {
             if (rel.source == *source && rel.target == *target)
                 || (rel.source == *target && rel.target == *source)
             {
@@ -274,6 +280,8 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, question: &str) ->
         };
     }
 
+    let relations = brain.get_all_relations();
+
     // Collect all concepts from paths
     let mut all_concepts = HashSet::new();
     let mut all_relations: Vec<(String, String, f64)> = Vec::new();
@@ -284,7 +292,7 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, question: &str) ->
             all_concepts.insert(&path[i + 1]);
 
             // Find relation
-            for rel in brain.relations.values() {
+            for rel in relations.values() {
                 if (rel.source == path[i] && rel.target == path[i + 1])
                     || (rel.source == path[i + 1] && rel.target == path[i])
                 {
@@ -313,11 +321,11 @@ pub fn aggregate_answer(paths: &[Vec<String>], brain: &Brain, question: &str) ->
 
     // Get description for first concept
     let description = main_concepts.first()
-        .and_then(|c| brain.concepts.get(*c))
-        .and_then(|c| c.description.as_deref());
+        .and_then(|c| brain.get_concept(*c))
+        .and_then(|c| c.description);
 
     let answer = if main_concepts.len() == 1 {
-        response_generator::generate_single_concept_answer(main_concepts[0], &related, description)
+        response_generator::generate_single_concept_answer(main_concepts[0], &related, description.as_deref())
     } else {
         response_generator::generate_paragraph(&all_relations, &main_concepts[0])
     };
@@ -424,14 +432,13 @@ pub fn ask(question: &str, brain: &Brain) -> Answer {
 /// Generate answer for a single concept
 fn answer_single_concept(concept: &str, brain: &Brain) -> Answer {
     // Get the description for the concept
-    let description = brain.concepts.get(concept)
-        .and_then(|c| c.description.as_deref());
+    let description = brain.get_concept(concept)
+        .and_then(|c| c.description);
 
-    let mut connections: Vec<_> = brain
-        .relations
+    let relations = brain.get_relations_for_concept(concept);
+    let mut connections: Vec<_> = relations
         .iter()
-        .filter(|(_, r)| r.source == concept || r.target == concept)
-        .map(|(_, r)| {
+        .map(|r| {
             let target = if r.source == concept {
                 &r.target
             } else {
@@ -444,7 +451,7 @@ fn answer_single_concept(concept: &str, brain: &Brain) -> Answer {
     connections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let top5: Vec<_> = connections.iter().take(5).map(|(t, w)| (t.clone(), *w)).collect();
 
-    let answer = response_generator::generate_single_concept_answer(concept, &top5, description);
+    let answer = response_generator::generate_single_concept_answer(concept, &top5, description.as_deref());
 
     Answer {
         answer,

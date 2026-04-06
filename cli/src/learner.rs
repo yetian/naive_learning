@@ -1,8 +1,9 @@
 // IncrementalLearner - Hebbian Learning Engine
 // Based on: "Neurons that fire together, wire together"
 
-use crate::brain::Brain;
+use crate::brain::{Brain, BookMetadata};
 use crate::nlp::Tokenizer;
+use std::path::PathBuf;
 use std::time::Instant;
 
 // Learning parameters
@@ -15,29 +16,53 @@ const MAX_TEXT_LENGTH: usize = 50000;
 
 pub struct IncrementalLearner {
     pub brain: Brain,
-    pub brain_path: std::path::PathBuf,
+    pub brain_path: PathBuf,
     tokenizer: Tokenizer,
+    /// Current book ID being learned (for tracking)
+    current_book_id: Option<i64>,
 }
 
 impl IncrementalLearner {
-    pub fn new(brain_path: Option<std::path::PathBuf>) -> Self {
+    pub fn new(brain_path: Option<PathBuf>) -> Self {
         let path = brain_path.unwrap_or_else(crate::brain::default_brain_path);
-        let brain = Brain::load(&path);
+        let brain = Brain::new(&path).expect("Failed to initialize brain database");
         let tokenizer = crate::nlp::get_tokenizer();
 
         Self {
             brain,
             brain_path: path,
             tokenizer,
+            current_book_id: None,
         }
     }
 
-    pub fn load(&mut self) {
-        self.brain = Brain::load(&self.brain_path);
+    /// Initialize with auto-migration from JSON
+    pub fn init() -> Self {
+        let brain = crate::brain::init_brain().expect("Failed to initialize brain");
+        let tokenizer = crate::nlp::get_tokenizer();
+        let brain_path = crate::brain::default_brain_path();
+
+        Self {
+            brain,
+            brain_path,
+            tokenizer,
+            current_book_id: None,
+        }
     }
 
-    pub fn save(&self) -> Result<(), std::io::Error> {
-        self.brain.save(&self.brain_path)
+    /// Start learning from a book (sets current book context)
+    pub fn start_book(&mut self, book_id: i64) {
+        self.current_book_id = Some(book_id);
+    }
+
+    /// Stop learning from current book
+    pub fn end_book(&mut self) {
+        self.current_book_id = None;
+    }
+
+    /// Get current book ID
+    pub fn current_book_id(&self) -> Option<i64> {
+        self.current_book_id
     }
 
     /// Learn from text with optional focus concept (ontology anchoring)
@@ -52,11 +77,13 @@ impl IncrementalLearner {
 
         let mut added_relations = 0u32;
         let mut updated_concepts = 0u32;
+        let mut concepts_in_batch = std::collections::HashSet::new();
 
         // Ensure focus concept exists as a concept (for multi-word concepts)
         if let Some(focus) = focus_concept {
-            let concept = self.brain.get_or_create_concept(focus);
-            concept.energy += ENERGY_PER_MENTION * 2.0; // Extra energy for being the focus
+            self.brain.get_or_create_concept(focus);
+            self.brain.update_concept(focus, ENERGY_PER_MENTION * 2.0, 1);
+            self.track_book_concept(focus);
             updated_concepts += 1;
         }
 
@@ -94,9 +121,15 @@ impl IncrementalLearner {
                 if is_valid_token(token) {
                     if self.update_concept_energy(token, focus_concept) {
                         updated_concepts += 1;
+                        concepts_in_batch.insert(token.to_string());
                     }
                 }
             }
+        }
+
+        // Track book concepts
+        for concept in concepts_in_batch {
+            self.track_book_concept(&concept);
         }
 
         let elapsed = start.elapsed().as_millis();
@@ -117,25 +150,28 @@ impl IncrementalLearner {
         }
     }
 
+    /// Track concept in current book
+    fn track_book_concept(&mut self, concept_name: &str) {
+        if let Some(book_id) = self.current_book_id {
+            self.brain.track_book_concept(book_id, concept_name);
+        }
+    }
+
     /// Update relation weight using logarithmic growth
     fn update_relation(&mut self, source: &str, target: &str, distance_decay: f64, focus_boost: f64) -> bool {
         // Add or get relation
-        self.brain.add_or_update_relation(source, target);
+        let id = self.brain.add_or_update_relation(source, target);
 
-        // Get mutable reference
-        if let Some(rel) = self.brain.get_relation_mut(source, target) {
+        // Get current relation data
+        if let Some(mut rel) = self.brain.get_relation_mut(source, target) {
             // Logarithmic growth
-            rel.count += 1;
-            let log_growth = (rel.count as f64 + 1.0).ln();
+            let new_count = rel.count + 1;
+            let log_growth = (new_count as f64 + 1.0).ln();
 
             // New weight = old weight + log_growth * distance_decay * focus_boost
-            let weight_increment = log_growth * distance_decay * focus_boost * 0.1;
-            rel.weight = (rel.weight + weight_increment).min(1.0);
-            rel.last_updated = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+            let weight_delta = log_growth * distance_decay * focus_boost * 0.1;
 
+            self.brain.update_relation(&id, weight_delta, 1);
             true
         } else {
             false
@@ -144,23 +180,19 @@ impl IncrementalLearner {
 
     /// Update concept energy
     fn update_concept_energy(&mut self, token: &str, focus_concept: Option<&str>) -> bool {
-        let concept = self.brain.get_or_create_concept(token);
+        // Ensure concept exists
+        self.brain.get_or_create_concept(token);
 
-        // Add energy
-        concept.energy += ENERGY_PER_MENTION;
-        concept.count += 1;
-        concept.last_seen = format!("{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0));
+        let mut energy_delta = ENERGY_PER_MENTION;
 
         // Focus concept bonus
         if let Some(focus) = focus_concept {
             if token.to_lowercase().contains(&focus.to_lowercase()) {
-                concept.energy += ENERGY_PER_MENTION;
+                energy_delta += ENERGY_PER_MENTION;
             }
         }
 
+        self.brain.update_concept(token, energy_delta, 1);
         true
     }
 
@@ -182,21 +214,22 @@ impl IncrementalLearner {
 
     /// Get statistics
     pub fn get_stats(&self) -> Stats {
-        let avg_weight = if self.brain.relations.is_empty() {
+        let concepts = self.brain.get_all_concepts();
+        let relations = self.brain.get_all_relations();
+
+        let avg_weight = if relations.is_empty() {
             0.0
         } else {
-            self.brain.relations.values().map(|r| r.weight).sum::<f64>()
-                / self.brain.relations.len() as f64
+            relations.values().map(|r| r.weight).sum::<f64>() / relations.len() as f64
         };
 
-        let avg_energy = if self.brain.concepts.is_empty() {
+        let avg_energy = if concepts.is_empty() {
             0.0
         } else {
-            self.brain.concepts.values().map(|c| c.energy).sum::<f64>()
-                / self.brain.concepts.len() as f64
+            concepts.values().map(|c| c.energy).sum::<f64>() / concepts.len() as f64
         };
 
-        let mut top_concepts: Vec<_> = self.brain.concepts.iter()
+        let mut top_concepts: Vec<_> = concepts.iter()
             .map(|(name, c)| (name.clone(), c.energy, c.count))
             .collect();
         top_concepts.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -218,8 +251,8 @@ impl IncrementalLearner {
     }
 
     /// Get concept info
-    pub fn get_concept(&self, name: &str) -> Option<&crate::brain::Concept> {
-        self.brain.concepts.get(name)
+    pub fn get_concept(&self, name: &str) -> Option<crate::brain::Concept> {
+        self.brain.get_concept(name)
     }
 
     /// Get related concepts (graph traversal)
@@ -247,7 +280,8 @@ impl IncrementalLearner {
         }
         visited.insert(current.to_string());
 
-        for rel in self.brain.relations.values() {
+        let relations = self.brain.get_relations_for_concept(current);
+        for rel in &relations {
             let neighbor = if rel.source == current {
                 Some(rel.target.as_str())
             } else if rel.target == current {

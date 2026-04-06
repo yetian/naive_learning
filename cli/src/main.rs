@@ -56,7 +56,11 @@ enum Commands {
         question: String,
     },
     /// Show knowledge graph stats
-    Stats,
+    Stats {
+        /// Show per-book statistics
+        #[arg(short, long)]
+        by_book: bool,
+    },
     /// Show full brain (knowledge graph)
     Brain,
     /// Clear knowledge base
@@ -86,15 +90,18 @@ enum Commands {
         #[arg(short, long, default_value = "3")]
         epochs: u32,
     },
-    /// Learn from file (txt, epub, mobi, azw3)
+    /// Learn from file (txt, epub, mobi, azw3, pdf)
     LearnFile {
-        /// File path (txt, epub, mobi, azw3)
+        /// File path (txt, epub, mobi, azw3, pdf)
         file: PathBuf,
         /// Focus concept (ontology anchoring)
         focus: Option<String>,
         /// Lines per second (rate control)
         #[arg(short, long, default_value = "100")]
         rate: u32,
+        /// Force re-learning even if already processed
+        #[arg(short, long)]
+        force: bool,
     },
     /// Train local language model from file
     TrainFile {
@@ -112,21 +119,34 @@ enum Commands {
         #[arg(short, long)]
         sandbox: Option<PathBuf>,
     },
+    /// List all learned books
+    ListBooks {
+        /// Filter by title (partial match)
+        #[arg(short, long)]
+        title: Option<String>,
+    },
+    /// Show what was learned from a specific book
+    BookInfo {
+        /// Book ID or title
+        book: String,
+    },
+    /// Check if a file has been learned
+    CheckFile {
+        /// File path to check
+        file: PathBuf,
+    },
+    /// Remove a book record (keeps concepts)
+    RemoveBook {
+        /// Book ID or title
+        book: String,
+    },
 }
 
 fn get_brain_path(brain_arg: Option<PathBuf>) -> PathBuf {
     if let Some(p) = brain_arg {
         return p;
     }
-
-    // Use project data directory
-    if let Some(proj_dirs) = directories::ProjectDirs::from("com", "seed-intelligence", "Seed-Intelligence") {
-        let data_dir = proj_dirs.data_dir();
-        std::fs::create_dir_all(data_dir).ok();
-        return data_dir.join("brain.json");
-    }
-
-    PathBuf::from("brain.json")
+    crate::brain::default_brain_path()
 }
 
 async fn run_init(learner: &mut learner::IncrementalLearner, concept: &str, auto_learn: bool) {
@@ -154,11 +174,6 @@ async fn run_init(learner: &mut learner::IncrementalLearner, concept: &str, auto
     let cleanup = learner.cleanup(false);
     println!("🧹 Cleanup: {} relations, {} concepts pruned",
         cleanup.pruned_relations, cleanup.pruned_concepts);
-
-    // Save
-    if let Err(e) = learner.save() {
-        eprintln!("Error saving brain: {}", e);
-    }
 
     // Get stats
     let stats = learner.get_stats();
@@ -190,10 +205,6 @@ fn run_learn_text(learner: &mut learner::IncrementalLearner, text: &str, focus: 
     let cleanup = learner.cleanup(false);
     println!("🧹 Cleanup: {} relations, {} concepts pruned",
         cleanup.pruned_relations, cleanup.pruned_concepts);
-
-    if let Err(e) = learner.save() {
-        eprintln!("Error saving brain: {}", e);
-    }
 }
 
 fn run_query(learner: &learner::IncrementalLearner, question: &str) {
@@ -212,7 +223,7 @@ fn run_ask(learner: &learner::IncrementalLearner, question: &str) {
     }
 }
 
-fn run_stats(learner: &learner::IncrementalLearner) {
+fn run_stats(learner: &learner::IncrementalLearner, by_book: bool) {
     let stats = learner.get_stats();
     println!("\n📊 Knowledge Graph Stats");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -220,6 +231,17 @@ fn run_stats(learner: &learner::IncrementalLearner) {
     println!("总关系数: {}", stats.total_relations);
     println!("平均权重: {:.4}", stats.avg_weight);
     println!("平均能量: {:.4}", stats.avg_energy);
+
+    if by_book {
+        let books = learner.brain.get_all_books();
+        if !books.is_empty() {
+            println!("\n📚 Books Learned ({}):", books.len());
+            for book in books.iter().take(20) {
+                println!("  {} - {} concepts", book.title, book.total_concepts_learned);
+            }
+        }
+    }
+
     println!("\n🔝 Top Concepts:");
     for tc in stats.top_concepts.iter().take(10) {
         println!("  {} (energy: {:.2}, count: {})", tc.name, tc.energy, tc.count);
@@ -227,21 +249,23 @@ fn run_stats(learner: &learner::IncrementalLearner) {
 }
 
 fn run_brain(learner: &learner::IncrementalLearner) {
-    println!("\n🧠 Knowledge Graph (brain.json)");
+    println!("\n🧠 Knowledge Graph (SQLite)");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("概念数: {}", learner.brain.total_concepts());
     println!("关系数: {}", learner.brain.total_relations());
 
-    if !learner.brain.concepts.is_empty() {
+    let concepts = learner.brain.get_all_concepts();
+    if !concepts.is_empty() {
         println!("\n📝 Concepts (first 20):");
-        for (i, (name, c)) in learner.brain.concepts.iter().take(20).enumerate() {
+        for (i, (name, c)) in concepts.iter().take(20).enumerate() {
             println!("  {}. {} (energy: {:.2}, count: {})", i + 1, name, c.energy, c.count);
         }
     }
 
-    if !learner.brain.relations.is_empty() {
+    let relations = learner.brain.get_all_relations();
+    if !relations.is_empty() {
         println!("\n🔗 Relations (first 20):");
-        for (i, r) in learner.brain.relations.values().take(20).enumerate() {
+        for (i, r) in relations.values().take(20).enumerate() {
             println!("  {}. {} ↔ {} (weight: {:.2})", i + 1, r.source, r.target, r.weight);
         }
     }
@@ -249,9 +273,6 @@ fn run_brain(learner: &learner::IncrementalLearner) {
 
 fn run_clear(learner: &mut learner::IncrementalLearner) {
     learner.clear();
-    if let Err(e) = learner.save() {
-        eprintln!("Error saving brain: {}", e);
-    }
     println!("✅ Knowledge base cleared!");
 }
 
@@ -307,7 +328,8 @@ fn run_generate(learner: &learner::IncrementalLearner, prompt: &str, max_tokens:
     }
 
     // Build vocabulary from brain concepts
-    for concept_name in learner.brain.concepts.keys() {
+    let concepts = learner.brain.get_all_concepts();
+    for concept_name in concepts.keys() {
         model.add_vocab(concept_name);
     }
     model.add_vocab(prompt);
@@ -356,41 +378,100 @@ fn run_train(learner: &learner::IncrementalLearner, text: &str, epochs: u32) {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
-fn run_learn_file(learner: &mut learner::IncrementalLearner, file_path: &PathBuf, focus: Option<&str>, rate: u32) {
+fn run_learn_file(learner: &mut learner::IncrementalLearner, file_path: &PathBuf, focus: Option<&str>, rate: u32, force: bool) {
     println!("\n📚 Learning from file: {:?}", file_path);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+    // Get file metadata
+    let metadata = file_reader::extract_book_metadata(file_path);
+    let file_size = file_reader::get_file_size(file_path).unwrap_or(0);
+
+    println!("📖 Title: {}", metadata.title);
+    if let Some(ref author) = metadata.author {
+        println!("👤 Author: {}", author);
+    }
+    println!("📄 Format: {}", metadata.format);
+    println!("📊 Size: {} bytes", file_size);
+
+    // Compute hash while streaming
+    println!("\n🔍 Computing file hash...");
 
     let batch_size = 10;
     let delay_ms = 1000 / rate.max(1);
 
-    let result = file_reader::stream_read_file(file_path, batch_size, |text| {
-        learner.learn_from_text(text, focus);
-
-        // Rate control
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms as u64));
-    });
+    // First pass: compute hash and check if already learned
+    let result = file_reader::stream_read_file_with_hash(file_path, batch_size, |_| {});
 
     match result {
-        Ok((lines, temp_file)) => {
-            // Cleanup
-            file_reader::cleanup_temp_file(temp_file.as_ref());
+        Ok((_, hash, _)) => {
+            println!("🔑 File hash: {}...", &hash[..16]);
 
-            // Final cleanup and save
-            let cleanup = learner.cleanup(false);
-            if let Err(e) = learner.save() {
-                eprintln!("❌ Error saving brain: {}", e);
+            // Check if already learned
+            if let Some(existing_book) = learner.brain.has_book(&hash) {
+                if !force {
+                    println!("\n⚠️  This file has already been learned!");
+                    println!("   Book: {} (ID: {})", existing_book.title, existing_book.id);
+                    println!("   Learned on: {}", format_timestamp(existing_book.processed_at));
+                    println!("   Concepts learned: {}", existing_book.total_concepts_learned);
+                    println!("\n   Use --force to re-learn this file.");
+                    return;
+                }
+                println!("\n⚠️  Re-learning previously learned file (--force)");
             }
 
-            println!("\n✅ Learning complete!");
-            println!("   Lines processed: {}", lines);
-            println!("   Pruned: {} relations, {} concepts", cleanup.pruned_relations, cleanup.pruned_concepts);
+            // Create book record
+            let book_id = learner.brain.add_book(
+                &hash,
+                file_path.to_str().unwrap_or(""),
+                &metadata,
+                file_size
+            );
 
-            let stats = learner.get_stats();
-            println!("   Total concepts: {}", stats.total_concepts);
-            println!("   Total relations: {}", stats.total_relations);
+            println!("📝 Book ID: {}", book_id);
+
+            // Start book context for learning
+            learner.start_book(book_id);
+
+            // Second pass: actual learning
+            let mut concepts_count = 0i64;
+            let learn_result = file_reader::stream_read_file(file_path, batch_size, |text| {
+                let result = learner.learn_from_text(text, focus);
+                concepts_count += result.concepts_updated as i64;
+
+                // Rate control
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms as u64));
+            });
+
+            // End book context
+            learner.end_book();
+
+            match learn_result {
+                Ok((lines, temp_file)) => {
+                    // Cleanup temp file
+                    file_reader::cleanup_temp_file(temp_file.as_ref());
+
+                    // Update book concept count
+                    learner.brain.update_book_concept_count(book_id, concepts_count);
+
+                    // Final cleanup
+                    let cleanup = learner.cleanup(false);
+
+                    println!("\n✅ Learning complete!");
+                    println!("   Lines processed: {}", lines);
+                    println!("   Concepts learned: {}", concepts_count);
+                    println!("   Pruned: {} relations, {} concepts", cleanup.pruned_relations, cleanup.pruned_concepts);
+
+                    let stats = learner.get_stats();
+                    println!("   Total concepts: {}", stats.total_concepts);
+                    println!("   Total relations: {}", stats.total_relations);
+                }
+                Err(e) => {
+                    eprintln!("❌ Error reading file: {}", e);
+                }
+            }
         }
         Err(e) => {
-            eprintln!("❌ Error reading file: {}", e);
+            eprintln!("❌ Error processing file: {}", e);
         }
     }
 
@@ -464,6 +545,110 @@ fn run_observe(learner: &mut learner::IncrementalLearner, sandbox: Option<PathBu
     }
 }
 
+fn run_list_books(learner: &learner::IncrementalLearner, title_filter: Option<&str>) {
+    let books = learner.brain.get_all_books();
+
+    let filtered: Vec<_> = if let Some(title) = title_filter {
+        books.into_iter().filter(|b| b.title.to_lowercase().contains(&title.to_lowercase())).collect()
+    } else {
+        books
+    };
+
+    if filtered.is_empty() {
+        println!("📚 No books found");
+        return;
+    }
+
+    println!("\n📚 Learned Books ({})", filtered.len());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("{:<4} {:<30} {:<20} {:<8} {:<10}", "ID", "Title", "Author", "Format", "Concepts");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+    for book in filtered {
+        let author = book.author.as_deref().unwrap_or("-");
+        let title = if book.title.len() > 28 { format!("{}...", &book.title[..25]) } else { book.title.clone() };
+        let author_display = if author.len() > 18 { format!("{}...", &author[..15]) } else { author.to_string() };
+
+        println!("{:<4} {:<30} {:<20} {:<8} {:<10}",
+            book.id, title, author_display, book.format, book.total_concepts_learned);
+    }
+}
+
+fn run_book_info(learner: &learner::IncrementalLearner, id_or_title: &str) {
+    if let Some(book) = learner.brain.get_book(id_or_title) {
+        println!("\n📖 Book: {}", book.title);
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("ID: {}", book.id);
+        if let Some(ref author) = book.author {
+            println!("Author: {}", author);
+        }
+        println!("Format: {}", book.format);
+        println!("File size: {} bytes", book.file_size);
+        println!("Processed: {}", format_timestamp(book.processed_at));
+        println!("Concepts learned: {}", book.total_concepts_learned);
+
+        // Show concepts from this book
+        let concepts = learner.brain.get_book_concepts(book.id);
+        if !concepts.is_empty() {
+            println!("\n📝 Top concepts from this book:");
+            for (i, (name, count)) in concepts.iter().take(20).enumerate() {
+                println!("  {}. {} (mentions: {})", i + 1, name, count);
+            }
+        }
+    } else {
+        println!("❌ Book '{}' not found", id_or_title);
+    }
+}
+
+fn run_check_file(learner: &learner::IncrementalLearner, file_path: &PathBuf) {
+    println!("\n🔍 Checking file: {:?}", file_path);
+
+    // Get file metadata
+    let metadata = file_reader::extract_book_metadata(file_path);
+    println!("📖 Title: {}", metadata.title);
+
+    // Compute hash
+    match file_reader::compute_file_hash(file_path) {
+        Ok(hash) => {
+            println!("🔑 Hash: {}...", &hash[..16]);
+
+            if let Some(book) = learner.brain.has_book(&hash) {
+                println!("\n✅ Already learned");
+                println!("   Book: {} (ID: {})", book.title, book.id);
+                println!("   Learned on: {}", format_timestamp(book.processed_at));
+            } else {
+                println!("\n❌ Not yet learned");
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Error computing hash: {}", e);
+        }
+    }
+}
+
+fn run_remove_book(learner: &mut learner::IncrementalLearner, id_or_title: &str) {
+    if let Some(book) = learner.brain.get_book(id_or_title) {
+        let book_id = book.id;
+        let title = book.title.clone();
+
+        if learner.brain.remove_book(book_id) {
+            println!("✅ Removed book: {} (ID: {})", title, book_id);
+            println!("   Note: Concepts learned from this book are preserved.");
+        } else {
+            println!("❌ Failed to remove book");
+        }
+    } else {
+        println!("❌ Book '{}' not found", id_or_title);
+    }
+}
+
+fn format_timestamp(ts: i64) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let dt = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(ts as u64);
+    let datetime: chrono::DateTime<chrono::Local> = dt.into();
+    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 fn run_repl(learner: &mut learner::IncrementalLearner, brain_path: PathBuf) {
     println!("\n╔═══════════════════════════════════════════╗");
     println!("║     🌱 Seed-Intelligence REPL             ║");
@@ -518,15 +703,13 @@ fn handle_command(input: &str, learner: &mut learner::IncrementalLearner, brain_
             print_help();
         }
         "/stats" => {
-            run_stats(learner);
+            run_stats(learner, false);
         }
         "/brain" => {
             run_brain(learner);
         }
         "/clear" => {
             run_clear(learner);
-            // Reload
-            learner.load();
         }
         "/concept" | "/c" => {
             if args.is_empty() {
@@ -557,8 +740,6 @@ fn handle_command(input: &str, learner: &mut learner::IncrementalLearner, brain_
                 println!("用法: /learn-text <文本>");
             } else {
                 run_learn_text(learner, args, None);
-                // Save after learning
-                learner.save().ok();
             }
         }
         "/init" => {
@@ -572,15 +753,14 @@ fn handle_command(input: &str, learner: &mut learner::IncrementalLearner, brain_
                 });
             }
         }
-        "/reload" => {
-            learner.load();
-            println!("✅ Brain reloaded from disk");
+        "/books" => {
+            run_list_books(learner, if args.is_empty() { None } else { Some(args) });
         }
-        "/save" => {
-            if let Err(e) = learner.save() {
-                eprintln!("Error saving: {}", e);
+        "/book-info" | "/book" => {
+            if args.is_empty() {
+                println!("用法: /book-info <书名或ID>");
             } else {
-                println!("✅ Brain saved to {:?}", brain_path);
+                run_book_info(learner, args);
             }
         }
         "/exit" | "/quit" => {
@@ -607,8 +787,6 @@ fn print_help() {
 ║    /stats           查看统计信息           ║
 ║    /brain           查看完整知识图谱       ║
 ║    /clear           清空知识库             ║
-║    /reload          重新加载知识库         ║
-║    /save            保存知识库             ║
 ║                                             ║
 ║  学习命令:                                 ║
 ║    /init <概念>     初始化并学习概念       ║
@@ -618,6 +796,10 @@ fn print_help() {
 ║  查询命令:                                 ║
 ║    /concept <名称>  查看概念详情           ║
 ║    /related <名称>  查看相关概念           ║
+║                                             ║
+║  书籍命令:                                 ║
+║    /books [标题]    列出学习的书籍         ║
+║    /book-info <ID>  查看书籍详情           ║
 ║                                             ║
 ║  退出:                                     ║
 ║    /exit, /quit     退出程序               ║
@@ -634,7 +816,8 @@ async fn main() {
 
     println!("📂 Brain path: {:?}", brain_path);
 
-    let mut learner = learner::IncrementalLearner::new(Some(brain_path.clone()));
+    // Use init() for auto-migration support
+    let mut learner = learner::IncrementalLearner::init();
 
     match cli.command {
         Some(Commands::Init { concept, auto_learn }) => {
@@ -652,8 +835,8 @@ async fn main() {
         Some(Commands::Ask { question }) => {
             run_ask(&learner, &question);
         }
-        Some(Commands::Stats) => {
-            run_stats(&learner);
+        Some(Commands::Stats { by_book }) => {
+            run_stats(&learner, by_book);
         }
         Some(Commands::Brain) => {
             run_brain(&learner);
@@ -673,8 +856,8 @@ async fn main() {
         Some(Commands::Train { text, epochs }) => {
             run_train(&learner, &text, epochs);
         }
-        Some(Commands::LearnFile { file, focus, rate }) => {
-            run_learn_file(&mut learner, &file, focus.as_deref(), rate);
+        Some(Commands::LearnFile { file, focus, rate, force }) => {
+            run_learn_file(&mut learner, &file, focus.as_deref(), rate, force);
         }
         Some(Commands::TrainFile { file, epochs }) => {
             run_train_file(&learner, &file, epochs);
@@ -684,6 +867,18 @@ async fn main() {
         }
         Some(Commands::Observe { sandbox }) => {
             run_observe(&mut learner, sandbox);
+        }
+        Some(Commands::ListBooks { title }) => {
+            run_list_books(&learner, title.as_deref());
+        }
+        Some(Commands::BookInfo { book }) => {
+            run_book_info(&learner, &book);
+        }
+        Some(Commands::CheckFile { file }) => {
+            run_check_file(&learner, &file);
+        }
+        Some(Commands::RemoveBook { book }) => {
+            run_remove_book(&mut learner, &book);
         }
         None => {
             // No command - start REPL
